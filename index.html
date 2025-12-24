@@ -3,50 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>فيديو شير - النسخة الاحترافية</title>
+    <title>فيديو شير - النسخة الاحترافية المستقرة</title>
+    
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
     <style>
-        :root { --primary: #ff0000; --bg: #f9f9f9; }
-        * { box-sizing: border-box; font-family: sans-serif; }
-        body { background: var(--bg); margin: 0; direction: rtl; }
-        header { background: white; padding: 15px 5%; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
-        .btn { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
-        .container { max-width: 800px; margin: 20px auto; padding: 0 15px; }
-        .video-card { background: white; border-radius: 15px; overflow: hidden; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        :root { --primary: #ff0000; --bg: #f9f9f9; --card-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: var(--bg); margin: 0; direction: rtl; color: #333; }
+        
+        /* الهيدر */
+        header { background: white; padding: 12px 5%; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
+        .logo { font-size: 1.5rem; font-weight: bold; color: var(--primary); text-decoration: none; }
+        
+        /* الأزرار */
+        .btn { background: var(--primary); color: white; border: none; padding: 10px 22px; border-radius: 25px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .btn-secondary { background: #555; }
+
+        .container { max-width: 850px; margin: 25px auto; padding: 0 15px; }
+
+        /* منطقة الرفع */
+        .upload-section { background: white; padding: 25px; border-radius: 15px; margin-bottom: 30px; box-shadow: var(--card-shadow); display: none; border: 2px dashed #ddd; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
+        
+        /* شريط التقدم */
+        .progress-container { width: 100%; background: #eee; border-radius: 10px; margin: 15px 0; display: none; overflow: hidden; }
+        .progress-bar { width: 0%; height: 12px; background: var(--primary); transition: width 0.3s; }
+
+        /* قائمة الفيديوهات */
+        .video-card { background: white; border-radius: 15px; overflow: hidden; margin-bottom: 30px; box-shadow: var(--card-shadow); }
         video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
-        .info { padding: 15px; }
-        .stats { display: flex; gap: 15px; margin-top: 10px; color: #666; font-size: 0.9rem; }
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center; }
-        .modal-content { background: white; padding: 25px; border-radius: 15px; width: 90%; max-width: 400px; }
-        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 8px; }
+        .video-info { padding: 18px; }
+        .video-title { font-size: 1.3rem; margin: 0 0 8px 0; font-weight: bold; }
+        .video-meta { display: flex; justify-content: space-between; align-items: center; color: #666; font-size: 0.9rem; }
+        .username { color: var(--primary); font-weight: bold; }
+
+        /* نافذة تسجيل الدخول */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; }
+        .modal-content { background: white; padding: 30px; border-radius: 15px; width: 90%; max-width: 420px; text-align: center; }
+        .auth-toggle { margin-top: 15px; color: #007bff; cursor: pointer; font-size: 0.9rem; }
     </style>
 </head>
 <body>
 
 <header>
-    <div style="font-size: 1.5rem; font-weight: bold; color: var(--primary);">🎥 فيديو شير</div>
-    <div id="navButtons"></div>
+    <a href="#" class="logo">🎥 فيديو شير</a>
+    <div id="navButtons">
+        <button class="btn" onclick="openAuth()">دخول / تسجيل</button>
+    </div>
 </header>
 
 <div class="container">
-    <div id="uploadArea" style="display:none; background: white; padding: 20px; border-radius: 15px; margin-bottom: 20px;">
-        <h3>رفع فيديو جديد</h3>
-        <input type="text" id="vTitle" placeholder="عنوان الفيديو...">
+    <div id="uploadArea" class="upload-section">
+        <h3 style="margin-top:0;">رفع فيديو جديد</h3>
+        <input type="text" id="vTitle" placeholder="أدخل عنواناً جذاباً للفيديو...">
         <input type="file" id="vFile" accept="video/*">
-        <button class="btn" style="width:100%" id="upBtn" onclick="handleUpload()">نشر الآن</button>
+        
+        <div class="progress-container" id="pContainer">
+            <div class="progress-bar" id="pBar"></div>
+        </div>
+        <div id="statusText" style="font-size: 0.85rem; margin-bottom: 10px; color: #555;"></div>
+
+        <button class="btn" style="width:100%" id="upBtn" onclick="handleUpload()">نشر الفيديو الآن</button>
     </div>
-    <div id="videoGrid">جاري التحميل...</div>
+
+    <div id="videoGrid">جاري تحميل الفيديوهات...</div>
 </div>
 
 <div id="authModal" class="modal">
     <div class="modal-content">
-        <h2 id="authTitle">تسجيل الدخول</h2>
-        <input type="text" id="regUser" placeholder="اسم المستخدم الفريد (Username)" style="display:none;">
+        <h2 id="authTitle" style="margin-top:0;">تسجيل الدخول</h2>
+        <input type="text" id="regUser" placeholder="اسم المستخدم (Username)" style="display:none;">
         <input type="email" id="email" placeholder="البريد الإلكتروني">
         <input type="password" id="password" placeholder="كلمة المرور">
-        <button class="btn" style="width:100%" onclick="submitAuth()">تأكيد</button>
-        <p onclick="toggleAuth()" style="text-align:center; color:blue; cursor:pointer; margin-top:15px;">تبديل بين دخول / حساب جديد</p>
-        <button onclick="closeAuth()" style="width:100%; margin-top:10px; border:none; background:none;">إغلاق</button>
+        <button class="btn" style="width:100%; margin-top: 10px;" onclick="submitAuth()">تأكيد</button>
+        <p class="auth-toggle" onclick="toggleAuth()" id="toggleTxt">ليس لديك حساب؟ سجل هنا</p>
+        <button onclick="closeAuth()" style="margin-top: 15px; background:none; border:none; color:#666; cursor:pointer;">إغلاق</button>
     </div>
 </div>
 
@@ -58,109 +91,145 @@
     let currentUser = null;
     let isSignup = false;
 
+    // تشغيل الموقع
     async function init() {
-        const { data } = await supabaseClient.auth.getUser();
-        currentUser = data?.user;
-        renderNav();
-        loadVideos();
+        try {
+            const { data } = await supabaseClient.auth.getUser();
+            currentUser = data?.user;
+            updateUI();
+            loadVideos();
+        } catch (e) { console.error("Init error:", e); }
     }
 
-    function renderNav() {
+    function updateUI() {
         const nav = document.getElementById('navButtons');
         if (currentUser) {
             const name = currentUser.user_metadata.display_name || "مستخدم";
-            nav.innerHTML = `<span style="margin-left:10px;">👤 @${name}</span>
-                             <button class="btn" onclick="logout()">خروج</button>
-                             <button class="btn" onclick="document.getElementById('uploadArea').style.display='block'">+ رفع</button>`;
-        } else {
-            nav.innerHTML = `<button class="btn" onclick="openAuth()">دخول / تسجيل</button>`;
+            nav.innerHTML = `
+                <span style="margin-left:12px;">👤 @${name}</span>
+                <button class="btn btn-secondary" onclick="logout()" style="margin-left:5px;">خروج</button>
+                <button class="btn" onclick="toggleUploadForm()">+ رفع فيديو</button>`;
         }
     }
 
+    // جلب الفيديوهات
     async function loadVideos() {
-        const { data } = await supabaseClient.from('video_files').select('*').order('id', { ascending: false });
         const grid = document.getElementById('videoGrid');
-        grid.innerHTML = data?.length ? "" : "لا توجد فيديوهات.";
+        const { data, error } = await supabaseClient.from('video_files').select('*').order('id', { ascending: false });
         
-        data?.forEach(v => {
+        if (error) { grid.innerHTML = "حدث خطأ في جلب البيانات."; return; }
+        
+        grid.innerHTML = (data && data.length > 0) ? "" : "<p style='text-align:center;'>لا توجد فيديوهات بعد. كن أول من ينشر!</p>";
+        
+        data.forEach(v => {
             grid.innerHTML += `
                 <div class="video-card">
-                    <video src="${v.url}" controls onplay="markView('${v.id}')"></video>
-                    <div class="info">
-                        <h3 style="margin:0;">${v.title}</h3>
-                        <small style="color:red;">👤 الناشر: @${v.username}</small>
-                        <div class="stats">
-                            <span>👁️ <span id="v-${v.id}">${v.views || 0}</span> مشاهدة</span>
+                    <video src="${v.url}" controls onplay="incrementView('${v.id}')" preload="metadata"></video>
+                    <div class="video-info">
+                        <h3 class="video-title">${v.title}</h3>
+                        <div class="video-meta">
+                            <span>بواسطة: <span class="username">@${v.username || 'مجهول'}</span></span>
+                            <span>👁️ <span id="vCount-${v.id}">${v.views || 0}</span> مشاهدة</span>
                         </div>
                     </div>
                 </div>`;
         });
     }
 
-    // منع تكرار المشاهدات باستخدام LocalStorage
-    async function markView(id) {
-        let viewed = JSON.parse(localStorage.getItem('viewed_videos') || '[]');
+    // زيادة المشاهدات (مرة واحدة لكل مستخدم لكل فيديو)
+    async function incrementView(id) {
+        let viewed = JSON.parse(localStorage.getItem('my_views') || '[]');
         if (!viewed.includes(id)) {
             const { error } = await supabaseClient.rpc('increment_views', { row_id: id });
             if (!error) {
                 viewed.push(id);
-                localStorage.setItem('viewed_videos', JSON.stringify(viewed));
-                const span = document.getElementById(`v-${id}`);
-                span.innerText = parseInt(span.innerText) + 1;
+                localStorage.setItem('my_views', JSON.stringify(viewed));
+                const el = document.getElementById(`vCount-${id}`);
+                if (el) el.innerText = parseInt(el.innerText) + 1;
             }
         }
     }
 
-    // وظائف العضوية
+    // إدارة الرفع مع شريط التقدم
+    async function handleUpload() {
+        const title = document.getElementById('vTitle').value;
+        const file = document.getElementById('vFile').files[0];
+        const btn = document.getElementById('upBtn');
+        const pBar = document.getElementById('pBar');
+        const pContainer = document.getElementById('pContainer');
+        const status = document.getElementById('statusText');
+
+        if (!title || !file) return alert("يرجى ملء كافة الحقول واختيار ملف");
+        if (file.size > 50 * 1024 * 1024) return alert("حجم الملف كبير جداً (الأقصى 50MB)");
+
+        btn.disabled = true;
+        pContainer.style.display = 'block';
+        status.innerText = "جاري الرفع... يرجى عدم إغلاق الصفحة";
+        pBar.style.width = "40%"; // محاكاة أولية للرفع
+
+        try {
+            const path = `${Date.now()}_${file.name}`;
+            const { data: uploadData, error: uploadError } = await supabaseClient.storage.from('videos').upload(path, file);
+            
+            if (uploadError) throw uploadError;
+
+            pBar.style.width = "80%";
+            status.innerText = "تم الرفع بنجاح! جاري المعالجة...";
+
+            const { data: urlData } = supabaseClient.storage.from('videos').getPublicUrl(path);
+
+            const { error: insertError } = await supabaseClient.from('video_files').insert([{
+                title: title,
+                url: urlData.publicUrl,
+                username: currentUser.user_metadata.display_name || "مستخدم"
+            }]);
+
+            if (insertError) throw insertError;
+
+            pBar.style.width = "100%";
+            status.innerText = "اكتمل النشر!";
+            setTimeout(() => location.reload(), 1000);
+
+        } catch (err) {
+            alert("حدث خطأ: " + err.message);
+            btn.disabled = false;
+            pContainer.style.display = 'none';
+        }
+    }
+
+    // وظائف تسجيل الدخول
     function openAuth() { document.getElementById('authModal').style.display = 'flex'; }
     function closeAuth() { document.getElementById('authModal').style.display = 'none'; }
     function toggleAuth() {
         isSignup = !isSignup;
-        document.getElementById('authTitle').innerText = isSignup ? "إنشاء حساب جديد" : "تسجيل الدخول";
+        document.getElementById('authTitle').innerText = isSignup ? "حساب جديد" : "تسجيل الدخول";
         document.getElementById('regUser').style.display = isSignup ? "block" : "none";
+        document.getElementById('toggleTxt').innerText = isSignup ? "لديك حساب؟ سجل دخولك" : "ليس لديك حساب؟ سجل هنا";
     }
 
     async function submitAuth() {
         const email = document.getElementById('email').value;
-        const pass = document.getElementById('password').value;
-        const userNm = document.getElementById('regUser').value;
-
+        const password = document.getElementById('password').value;
+        const username = document.getElementById('regUser').value;
         try {
             if (isSignup) {
                 const { error } = await supabaseClient.auth.signUp({ 
-                    email, password: pass, options: { data: { display_name: userNm } } 
+                    email, password, options: { data: { display_name: username } } 
                 });
                 if (error) throw error;
-                alert("تم التسجيل! تفقد بريدك لتفعيل الحساب (أو سجل دخولك مباشرة)");
+                alert("تم التسجيل! يمكنك تسجيل الدخول الآن.");
             } else {
-                const { error } = await supabaseClient.auth.signInWithPassword({ email, password: pass });
+                const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
                 if (error) throw error;
             }
             location.reload();
-        } catch (e) { alert(e.message); }
+        } catch (e) { alert("خطأ: " + e.message); }
     }
 
     async function logout() { await supabaseClient.auth.signOut(); location.reload(); }
-
-    async function handleUpload() {
-        const title = document.getElementById('vTitle').value;
-        const file = document.getElementById('vFile').files[0];
-        if (!title || !file) return alert("أكمل البيانات");
-
-        const btn = document.getElementById('upBtn');
-        btn.disabled = true;
-        try {
-            const path = Date.now() + "_" + file.name;
-            await supabaseClient.clientContext; // تمويه بسيط لضمان التحميل
-            await supabaseClient.storage.from('videos').upload(path, file);
-            const { data } = supabaseClient.storage.from('videos').getPublicUrl(path);
-
-            await supabaseClient.from('video_files').insert([{ 
-                title, url: data.publicUrl, 
-                username: currentUser.user_metadata.display_name 
-            }]);
-            location.reload();
-        } catch (e) { alert("خطأ في الرفع"); btn.disabled = false; }
+    function toggleUploadForm() {
+        const el = document.getElementById('uploadArea');
+        el.style.display = (el.style.display === 'block') ? 'none' : 'block';
     }
 
     init();
