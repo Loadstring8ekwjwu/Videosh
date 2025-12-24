@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>فيديو شير - النسخة الاحترافية</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --red: #ff0000; --bg: #f4f4f4; }
+        body { font-family: sans-serif; background: var(--bg); margin: 0; padding: 0; direction: rtl; }
+        header { background: white; padding: 15px 5%; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
+        .container { max-width: 800px; margin: 20px auto; padding: 10px; }
+        .video-card { background: white; border-radius: 12px; margin-bottom: 25px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+        .info { padding: 15px; }
+        .stats { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; font-size: 0.9rem; }
+        .btn { background: var(--red); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .like-btn { cursor: pointer; color: #555; background: #eee; padding: 5px 12px; border-radius: 20px; border: none; }
+        .liked { background: #ffebeb; color: var(--red); }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+
+<header>
+    <b style="color:var(--red); font-size:1.5rem;">🎥 فيديو شير</b>
+    <button class="btn" id="uploadToggle" onclick="toggleUpload()">+ رفع فيديو</button>
+</header>
+
+<div class="container">
+    <div id="uploadArea" style="display:none; background:white; padding:20px; border-radius:10px; margin-bottom:20px;">
+        <h3>انشر فيديو جديد</h3>
+        <input type="text" id="vUser" placeholder="اسم المستخدم الخاص بك">
+        <input type="text" id="vTitle" placeholder="عنوان الفيديو">
+        <input type="file" id="vFile" accept="video/*">
+        <button class="btn" style="width:100%" id="upBtn" onclick="handleUpload()">نشر الآن</button>
+    </div>
+
+    <div id="videoGrid">جارٍ تحميل الفيديوهات...</div>
+</div>
+
+<script>
+    const S_URL = 'https://dirvquetzoqenqzezqhr.supabase.co';
+    const S_KEY = 'sb_publishable_eeDbQM7zyLYW_8qKBzkbhg_9LduTmqw';
+    const supabaseClient = supabase.createClient(S_URL, S_KEY);
+
+    // 1. جلب الفيديوهات بأمان
+    async function loadVideos() {
+        const grid = document.getElementById('videoGrid');
+        try {
+            const { data, error } = await supabaseClient.from('video_files').select('*').order('id', { ascending: false });
+            if (error) throw error;
+            
+            grid.innerHTML = data.length === 0 ? "لا توجد فيديوهات." : "";
+            data.forEach(v => {
+                grid.innerHTML += `
+                    <div class="video-card">
+                        <video src="${v.url}" controls onplay="incrementView('${v.id}')"></video>
+                        <div class="info">
+                            <h3 style="margin:0;">${v.title}</h3>
+                            <small style="color:var(--red);">👤 @${v.username}</small>
+                            <div class="stats">
+                                <span>👁️ <span id="view-${v.id}">${v.views || 0}</span> مشاهدة</span>
+                                <button class="like-btn" id="btn-${v.id}" onclick="handleLike('${v.id}')">❤️ <span id="like-${v.id}">${v.likes || 0}</span></button>
+                            </div>
+                        </div>
+                    </div>`;
+            });
+        } catch (e) { grid.innerHTML = "خطأ في الاتصال."; }
+    }
+
+    // 2. الرفع الآمن
+    async function handleUpload() {
+        const user = document.getElementById('vUser').value;
+        const title = document.getElementById('vTitle').value;
+        const file = document.getElementById('vFile').files[0];
+        const btn = document.getElementById('upBtn');
+
+        if (!user || !title || !file) return alert("أكمل البيانات!");
+        
+        btn.disabled = true; btn.innerText = "جاري الرفع...";
+
+        try {
+            const fileName = Date.now() + "_" + file.name;
+            await supabaseClient.storage.from('videos').upload(fileName, file);
+            const { data: urlData } = supabaseClient.storage.from('videos').getPublicUrl(fileName);
+
+            await supabaseClient.from('video_files').insert([{ title, url: urlData.publicUrl, username: user }]);
+            location.reload();
+        } catch (e) { alert("فشل الرفع"); btn.disabled = false; }
+    }
+
+    // 3. المشاهدات والإعجابات (لا تعطل الموقع في حال فشلت)
+    async function incrementView(id) {
+        try { await supabaseClient.rpc('increment_views', { row_id: id }); } catch(e){}
+    }
+
+    async function handleLike(id) {
+        try {
+            const btn = document.getElementById('btn-' + id);
+            if (btn.classList.contains('liked')) return; // منع التكرار
+            
+            await supabaseClient.rpc('increment_likes', { row_id: id });
+            const likeSpan = document.getElementById('like-' + id);
+            likeSpan.innerText = parseInt(likeSpan.innerText) + 1;
+            btn.classList.add('liked');
+        } catch(e){}
+    }
+
+    function toggleUpload() {
+        const area = document.getElementById('uploadArea');
+        area.style.display = (area.style.display === 'none') ? 'block' : 'none';
+    }
+
+    loadVideos();
+</script>
+</body>
+</html>
