@@ -8,27 +8,16 @@
     <style>
         :root { --red: #ff0000; --bg: #f4f4f4; }
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); margin: 0; direction: rtl; }
-        header {
-            background: #fff;
-            padding: 12px 5%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-        }
+        header { background: #fff; padding: 12px 5%; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
         .btn { background: var(--red); color: #fff; border: none; padding: 8px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; }
         .container { max-width: 800px; margin: 20px auto; padding: 0 15px; }
         .upload-card { background: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: none; }
-        input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; }
         .video-item { background: #fff; border-radius: 12px; margin-bottom: 20px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-        video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+        video { width: 100%; aspect-ratio: 16/9; background: #000; }
         .p-15 { padding: 15px; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
         .modal-box { background: #fff; padding: 25px; border-radius: 12px; width: 90%; max-width: 380px; text-align: center; }
-        .muted { color:#777; font-size:0.9rem; }
     </style>
 </head>
 <body>
@@ -41,205 +30,142 @@
 </header>
 
 <div class="container">
-    <div id="upSection" class="upload-card" aria-hidden="true">
+    <div id="upSection" class="upload-card">
         <h3 style="margin-top:0;">نشر فيديو</h3>
         <input type="text" id="vTitle" placeholder="العنوان">
         <input type="file" id="vFile" accept="video/*">
-        <button id="upBtn" class="btn" style="width:100%" onclick="doUpload()">رفع الآن</button>
+        <button id="upBtn" class="btn" style="width:100%">رفع الآن</button>
     </div>
     <div id="list">جاري التحميل...</div>
 </div>
 
-<div id="aModal" class="modal" role="dialog" aria-modal="true">
+<div id="aModal" class="modal">
     <div class="modal-box">
         <h3 id="aTitle">تسجيل دخول</h3>
         <input type="text" id="aUser" placeholder="اسم المستخدم" style="display:none">
         <input type="email" id="aEmail" placeholder="الإيميل">
         <input type="password" id="aPass" placeholder="كلمة المرور">
-        <button class="btn" style="width:100%" onclick="auth()">تأكيد</button>
+        <button class="btn" style="width:100%">تأكيد</button>
         <p onclick="toggleA()" style="color:blue; cursor:pointer; font-size:0.8rem; margin-top:10px;">تبديل بين دخول / تسجيل</p>
     </div>
 </div>
 
 <script>
-    // تكوين Supabase
-    const S_URL = 'https://dirvquetzoqenqzezqhr.supabase.co';
-    const S_KEY = 'sb_publishable_eeDbQM7zyLYW_8qKBzkbhg_9LduTmqw'; // تأكد إن هذا هو مفتاح مناسب للواجهة (anon/publishable)
-    const client = supabase.createClient(S_URL, S_KEY);
+const S_URL = 'https://dirvquetzoqenqzezqhr.supabase.co';
+const S_KEY = 'sb_publishable_eeDbQM7zyLYW_8qKBzkbhg_9LduTmqw';
+const client = supabase.createClient(S_URL, S_KEY);
 
-    let user = null;
-    let isSign = false;
+let user = null;
+let isSign = false;
 
-    // تعقيم بسيط للنص قبل الإدراج في innerHTML
-    function esc(str) {
-        if (str == null) return '';
-        return String(str)
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#39;');
-    }
-
-    async function signOut() {
-        try {
+async function init() {
+    const { data } = await client.auth.getUser();
+    user = data?.user;
+    if(user) {
+        const name = user.user_metadata?.display_name || "مستخدم";
+        document.getElementById('nav').innerHTML = `<span>@${name}</span> <button class="btn" style="background:#666; margin-right:8px;">خروج</button>`;
+        document.querySelector('#nav button').addEventListener('click', async () => {
             await client.auth.signOut();
-        } catch(e) {
-            console.error('signOut error', e);
-        }
-        location.reload();
+            location.reload();
+        });
+        document.getElementById('upSection').style.display = 'block';
     }
+    loadVideos();
+}
 
-    async function init() {
-        try {
-            const res = await client.auth.getUser();
-            // res.data.user أو حسب صيغة الاستجابة
-            user = res?.data?.user || null;
-            const nav = document.getElementById('nav');
-            if (user) {
-                const name = user.user_metadata?.display_name || user.email || 'مستخدم';
-                nav.innerHTML = `<span>@${esc(name)}</span> <button class="btn" style="background:#666; margin-right:8px;" onclick="signOut()">خروج</button>`;
-                document.getElementById('upSection').style.display = 'block';
-                document.getElementById('upSection').setAttribute('aria-hidden', 'false');
-            } else {
-                nav.innerHTML = `<button class="btn" onclick="openAuth()">دخول</button>`;
-                document.getElementById('upSection').style.display = 'none';
-            }
-        } catch (e) {
-            console.error('init auth error', e);
-        }
-        await load();
-    }
+async function loadVideos() {
+    const { data, error } = await client.from('video_files').select('*').order('id', {ascending: false});
+    const div = document.getElementById('list');
+    if(error) { div.innerText = "حدث خطأ عند تحميل الفيديوهات"; return; }
+    if(!data?.length) { div.innerText = "لا يوجد فيديوهات."; return; }
 
-    async function load() {
-        const div = document.getElementById('list');
-        div.innerHTML = 'جاري التحميل...';
-        try {
-            const { data, error } = await client
-                .from('video_files')
-                .select('*')
-                .order('id', { ascending: false });
+    const frag = document.createDocumentFragment();
+    data.forEach(v => {
+        const videoDiv = document.createElement('div');
+        videoDiv.className = "video-item";
+        videoDiv.innerHTML = `
+            <video src="${v.url}" controls></video>
+            <div class="p-15">
+                <b>${v.title}</b>
+                <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
+                    <span>بواسطة: ${v.username}</span>
+                    <span>👁️ <span id="c-${v.id}">${v.views || 0}</span></span>
+                </div>
+            </div>`;
+        const videoEl = videoDiv.querySelector('video');
+        videoEl.addEventListener('play', () => hitView(v.id));
+        frag.appendChild(videoDiv);
+    });
+    div.innerHTML = "";
+    div.appendChild(frag);
+}
 
-            if (error) throw error;
-            if (!data || data.length === 0) {
-                div.innerHTML = 'لا يوجد فيديوهات.';
-                return;
-            }
-
-            div.innerHTML = '';
-            data.forEach(v => {
-                // نعقم النصوص قبل الإدراج
-                const id = esc(v.id);
-                const title = esc(v.title);
-                const username = esc(v.username);
-                const views = esc(v.views || 0);
-                const url = esc(v.url);
-
-                const item = document.createElement('div');
-                item.className = 'video-item';
-                item.innerHTML = `
-                    <video src="${url}" controls onplay="hitView('${id}')"></video>
-                    <div class="p-15">
-                        <b>${title}</b>
-                        <div style="display:flex; justify-content:space-between; margin-top:10px;" class="muted">
-                            <span>بواسطة: ${username}</span>
-                            <span>👁️ <span id="c-${id}">${views}</span></span>
-                        </div>
-                    </div>`;
-                div.appendChild(item);
-            });
-        } catch (e) {
-            console.error(e);
-            div.innerHTML = 'حدث خطأ أثناء تحميل الفيديوهات.';
-        }
-    }
-
-    async function hitView(id) {
-        try {
-            let history = JSON.parse(sessionStorage.getItem('seen') || '[]');
-            if (history.includes(id)) return;
-
-            const { error } = await client.rpc('increment_views', { row_id: id });
-            if (error) {
-                console.error('RPC error', error);
-                return;
-            }
-
+async function hitView(id) {
+    let history = JSON.parse(sessionStorage.getItem('seen') || '[]');
+    if(history.includes(id)) return;
+    try {
+        const { error } = await client.rpc('increment_views', { row_id: id });
+        if(!error) {
             history.push(id);
             sessionStorage.setItem('seen', JSON.stringify(history));
-
             const span = document.getElementById(`c-${id}`);
-            if (span) span.innerText = String(parseInt(span.innerText || '0') + 1);
-        } catch (e) {
-            console.error('hitView error', e);
+            if(span) span.innerText = parseInt(span.innerText) + 1;
         }
+    } catch(e) { console.error(e); }
+}
+
+document.getElementById('upBtn').addEventListener('click', doUpload);
+async function doUpload() {
+    const t = document.getElementById('vTitle').value;
+    const f = document.getElementById('vFile').files[0];
+    if(!t || !f) return alert("أكمل البيانات");
+
+    const btn = document.getElementById('upBtn');
+    btn.disabled = true;
+    btn.innerText = "جاري الرفع...";
+
+    try {
+        const path = Date.now() + "_" + f.name;
+        await client.storage.from('videos').upload(path, f);
+        const { data } = client.storage.from('videos').getPublicUrl(path); // لا await هنا
+        await client.from('video_files').insert([{ title: t, url: data.publicUrl, username: user.user_metadata?.display_name || "مستخدم" }]);
+        location.reload();
+    } catch(e) {
+        alert("حدث خطأ أثناء الرفع");
+        console.error(e);
+        btn.disabled = false;
+        btn.innerText = "رفع الآن";
     }
+}
 
-    async function doUpload() {
-        const t = document.getElementById('vTitle').value.trim();
-        const f = document.getElementById('vFile').files[0];
-        if (!t || !f) return alert("أكمل البيانات");
+function openAuth() { document.getElementById('aModal').style.display='flex'; }
+function toggleA() {
+    isSign = !isSign;
+    document.getElementById('aTitle').innerText = isSign ? "حساب جديد" : "تسجيل دخول";
+    const userInput = document.getElementById('aUser');
+    userInput.style.display = isSign ? "block" : "none";
+    userInput.value = "";
+}
 
-        const btn = document.getElementById('upBtn');
-        btn.disabled = true; btn.innerText = "جاري الرفع...";
+document.querySelector('#aModal button').addEventListener('click', auth);
+async function auth() {
+    const e = document.getElementById('aEmail').value;
+    const p = document.getElementById('aPass').value;
+    const u = document.getElementById('aUser').value;
 
-        try {
-            const path = Date.now() + "_" + f.name.replace(/\s+/g, '_');
-            const { data: uploadData, error: uploadError } = await client.storage.from('videos').upload(path, f);
-            if (uploadError) throw uploadError;
-
-            // الحصول على رابط عام
-            const { data: publicData } = client.storage.from('videos').getPublicUrl(path);
-            const publicUrl = publicData?.publicUrl || publicData?.publicURL || null;
-            if (!publicUrl) throw new Error('فشل الحصول على رابط الملف');
-
-            const username = user?.user_metadata?.display_name || user?.email || 'مجهول';
-            const { error: insertError } = await client.from('video_files').insert([{ title: t, url: publicUrl, username }]);
-            if (insertError) throw insertError;
-
-            location.reload();
-        } catch (e) {
-            console.error('upload error', e);
-            alert("خطأ أثناء الرفع: " + (e.message || e));
-            btn.disabled = false;
-            btn.innerText = "رفع الآن";
+    try {
+        if(isSign) {
+            await client.auth.signUp({email:e, password:p, options:{data:{display_name:u}}});
+        } else {
+            await client.auth.signInWithPassword({email:e, password:p});
         }
+        location.reload();
+    } catch(err) {
+        alert(err.message);
     }
+}
 
-    function openAuth() { document.getElementById('aModal').style.display = 'flex'; }
-    function closeAuth() { document.getElementById('aModal').style.display = 'none'; }
-
-    function toggleA() {
-        isSign = !isSign;
-        document.getElementById('aTitle').innerText = isSign ? "حساب جديد" : "تسجيل دخول";
-        document.getElementById('aUser').style.display = isSign ? 'block' : 'none';
-    }
-
-    async function auth() {
-        const e = document.getElementById('aEmail').value.trim();
-        const p = document.getElementById('aPass').value;
-        const u = document.getElementById('aUser').value.trim();
-
-        if (!e || !p || (isSign && !u)) return alert('أكمل الحقول المطلوبة');
-
-        try {
-            if (isSign) {
-                const { error } = await client.auth.signUp({ email: e, password: p, options: { data: { display_name: u } } });
-                if (error) throw error;
-                alert('تم إنشاء الحساب. قم بتأكيد الإيميل إذا لزم الأمر.');
-            } else {
-                const { error } = await client.auth.signInWithPassword({ email: e, password: p });
-                if (error) throw error;
-            }
-            location.reload();
-        } catch (err) {
-            console.error('auth error', err);
-            alert(err?.message || 'حدث خطأ أثناء العملية');
-        }
-    }
-
-    // بداية
-    init();
+init();
 </script>
 </body>
 </html>
