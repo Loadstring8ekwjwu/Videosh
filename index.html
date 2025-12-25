@@ -101,7 +101,7 @@ async function loadVideos() {
     div.appendChild(frag);
 }
 
-// رفع الفيديو
+// رفع الفيديو بدون إعادة تحميل الصفحة
 document.getElementById('upBtn').addEventListener('click', doUpload);
 async function doUpload() {
     const t = document.getElementById('vTitle').value;
@@ -115,16 +115,37 @@ async function doUpload() {
     try {
         const path = Date.now() + "_" + f.name;
         await client.storage.from('videos').upload(path, f, { upsert: true });
+
         const data = client.storage.from('videos').getPublicUrl(path);
         const publicUrl = data.publicUrl;
 
-        await client.from('video_files').insert([{
+        const { error } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
             username: user.user_metadata?.display_name || "مستخدم"
         }]);
+        if(error) throw error;
 
-        location.reload();
+        // إضافة الفيديو مباشرة للقائمة
+        const div = document.getElementById('list');
+        const videoDiv = document.createElement('div');
+        videoDiv.className = "video-item";
+        videoDiv.innerHTML = `
+            <video src="${publicUrl}" controls></video>
+            <div class="p-15">
+                <b>${t}</b>
+                <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
+                    <span>بواسطة: ${user.user_metadata?.display_name || "مستخدم"}</span>
+                </div>
+            </div>`;
+        div.prepend(videoDiv);
+
+        btn.disabled = false;
+        btn.innerText = "رفع الآن";
+
+        document.getElementById('vTitle').value = "";
+        document.getElementById('vFile').value = "";
+
     } catch(e) {
         alert("حدث خطأ أثناء الرفع");
         console.error(e);
