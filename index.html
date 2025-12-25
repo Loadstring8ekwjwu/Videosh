@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>فيديو شير - النسخة النظيفة</title>
+<title>فيديو شير - النسخة النهائية</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root { --red: #ff0000; --bg: #f4f4f4; }
@@ -114,13 +114,13 @@ async function doUpload() {
 
     try {
         const path = Date.now() + "_" + f.name;
-        await client.storage.from('videos').upload(path, f);
-
-        const { data } = client.storage.from('videos').getPublicUrl(path);
+        await client.storage.from('videos').upload(path, f, { upsert: true });
+        const data = client.storage.from('videos').getPublicUrl(path);
+        const publicUrl = data.publicUrl;
 
         await client.from('video_files').insert([{
             title: t,
-            url: data.publicUrl,
+            url: publicUrl,
             username: user.user_metadata?.display_name || "مستخدم"
         }]);
 
