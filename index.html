@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>فيديو شير - النسخة المستقرة</title>
+<title>فيديو شير - النسخة النظيفة</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root { --red: #ff0000; --bg: #f4f4f4; }
@@ -58,6 +58,7 @@ const client = supabase.createClient(S_URL, S_KEY);
 let user = null;
 let isSign = false;
 
+// تهيئة الموقع
 async function init() {
     const { data } = await client.auth.getUser();
     user = data?.user;
@@ -75,6 +76,7 @@ async function init() {
     loadVideos();
 }
 
+// تحميل وعرض الفيديوهات
 async function loadVideos() {
     const { data, error } = await client.from('video_files').select('*').order('id', {ascending: false});
     const div = document.getElementById('list');
@@ -91,34 +93,15 @@ async function loadVideos() {
                 <b>${v.title}</b>
                 <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
                     <span>بواسطة: ${v.username}</span>
-                    <span>👁️ <span id="c-${v.id}">${v.views || 0}</span></span>
                 </div>
             </div>`;
-        const videoEl = videoDiv.querySelector('video');
-        videoEl.addEventListener('play', () => hitView(v.id));
         frag.appendChild(videoDiv);
     });
     div.innerHTML = "";
     div.appendChild(frag);
 }
 
-// زيادة المشاهدات باستخدام RPC
-async function hitView(id) {
-    let history = JSON.parse(sessionStorage.getItem('seen') || '[]');
-    if(history.includes(id)) return;
-
-    try {
-        const { error } = await client.rpc('increment_views', { row_id: id });
-        if(error) { console.error(error); return; }
-
-        const span = document.getElementById(`c-${id}`);
-        if(span) span.innerText = parseInt(span.innerText) + 1;
-
-        history.push(id);
-        sessionStorage.setItem('seen', JSON.stringify(history));
-    } catch(e) { console.error(e); }
-}
-
+// رفع الفيديو
 document.getElementById('upBtn').addEventListener('click', doUpload);
 async function doUpload() {
     const t = document.getElementById('vTitle').value;
@@ -138,8 +121,7 @@ async function doUpload() {
         await client.from('video_files').insert([{
             title: t,
             url: data.publicUrl,
-            username: user.user_metadata?.display_name || "مستخدم",
-            views: 0
+            username: user.user_metadata?.display_name || "مستخدم"
         }]);
 
         location.reload();
@@ -151,6 +133,7 @@ async function doUpload() {
     }
 }
 
+// فتح المودال وتبديل دخول/تسجيل
 function openAuth() { document.getElementById('aModal').style.display='flex'; }
 function toggleA() {
     isSign = !isSign;
@@ -160,6 +143,7 @@ function toggleA() {
     userInput.value = "";
 }
 
+// زر تأكيد تسجيل الدخول / التسجيل
 document.getElementById('aConfirmBtn').addEventListener('click', auth);
 async function auth() {
     const e = document.getElementById('aEmail').value;
