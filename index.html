@@ -150,9 +150,9 @@ async function loadVideos() {
     div.innerHTML = '<div style="text-align:center; padding:30px;">جاري التحميل... <div class="loading-spinner"></div></div>';
     try {
         // جلب الفيديوهات
-        const { data: videos, error: videosError } = await client
+        const {  videos, error: videosError } = await client
             .from('video_files')
-            .select('id, title, url, username, created_at, path')
+            .select('id, title, url, username, views, created_at, path')
             .order('created_at', { ascending: false });
         
         if (videosError) {
@@ -165,34 +165,13 @@ async function loadVideos() {
             return;
         }
 
-        // جلب عدد المشاهدات لكل فيديو
-        const videoIds = videos.map(v => v.id);
-        const { data: viewsData, error: viewsError } = await client
-            .from('views')
-            .select('video_id')
-            .in('video_id', videoIds);
-        
-        if (viewsError && viewsError.code !== 'PGRST116') {
-            console.error('Views error:', viewsError);
-        }
-
-        // حساب عدادات المشاهدات
-        const viewsCount = {};
-        if (viewsData) {
-            viewsData.forEach(view => {
-                viewsCount[view.video_id] = (viewsCount[view.video_id] || 0) + 1;
-            });
-        }
-
         // جلب حالة الإعجابات
         let userLikeData = null;
         if (user) {
-            const { data: likesData, error: likesError } = await client
-                .from('video_likes')
-                .select('video_id')
-                .eq('user_id', user.id);
+            const {  likesData, error: likesError } = await client
+                .rpc('get_user_likes', { p_user_id: user.id });
             
-            if (likesError && likesError.code !== 'PGRST116') {
+            if (likesError) {
                 console.error('Likes error:', likesError);
             } else {
                 userLikeData = likesData;
@@ -200,20 +179,18 @@ async function loadVideos() {
         }
 
         // جلب عدد الإعجابات
-        const { data: likesCountData, error: likesCountError } = await client
-            .from('video_likes')
-            .select('video_id')
-            .in('video_id', videoIds);
+        const {  likesCountData, error: likesCountError } = await client
+            .rpc('get_likes_count_all');
         
-        if (likesCountError && likesCountError.code !== 'PGRST116') {
+        if (likesCountError) {
             console.error('Likes count error:', likesCountError);
         }
 
         // حساب عدادات الإعجابات
         const likesCount = {};
         if (likesCountData) {
-            likesCountData.forEach(like => {
-                likesCount[like.video_id] = (likesCount[like.video_id] || 0) + 1;
+            likesCountData.forEach(item => {
+                likesCount[item.video_id] = item.count;
             });
         }
 
@@ -228,7 +205,7 @@ async function loadVideos() {
         videos.forEach(v => {
             const videoDiv = document.createElement('div');
             videoDiv.className = "video-item";
-            const viewCount = viewsCount[v.id] || 0;
+            const viewCount = v.views || 0;
             const likeCount = likesCount[v.id] || 0;
             const isLiked = likedVideos.has(v.id);
             
@@ -292,58 +269,34 @@ function trackView(videoId, videoElement) {
     videoElement.addEventListener('pause', () => {
         videoElement.removeEventListener('timeupdate', handler);
     });
-    
-    // إذا كان الفيديو قصيرًا (< 3 ثواني)، نسجل المشاهدة عند الانتهاء
-    videoElement.addEventListener('ended', () => {
-        if (!viewedVideos.has(videoId)) {
-            viewedVideos.add(videoId);
-            incrementView(videoId);
-        }
-    });
 }
 
 async function incrementView(videoId) {
     try {
         if (!user) return;
         
-        // التحقق أولاً إذا كان المستخدم قد شاهد هذا الفيديو من قبل
-        const { data: existingView, error: checkError } = await client
-            .from('views')
-            .select('id')
-            .eq('video_id', videoId)
-            .eq('user_id', user.id)
-            .maybeSingle();
+        // الحصول على العداد الحالي
+        const countElement = document.querySelector(`.view-count-${videoId}`);
+        if (!countElement) return;
         
-        if (checkError && checkError.code !== 'PGRST116') {
-            console.error('Check view error:', checkError);
-            return;
-        }
+        const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
         
-        // إذا لم يسجل مشاهدة من قبل
-        if (!existingView) {
-            const { error: insertError } = await client
-                .from('views')
-                .insert([
-                    { 
-                        video_id: videoId, 
-                        user_id: user.id 
-                    }
-                ]);
-            
-            if (insertError) {
-                console.error('Insert view error:', insertError);
-                return;
-            }
-            
-            // تحديث العرض فوراً
-            const countElement = document.querySelector(`.view-count-${videoId}`);
-            if (countElement) {
-                const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-                countElement.textContent = formatNumber(currentCount + 1);
-            }
+        // تحديث العداد في واجهة المستخدم فوراً
+        countElement.textContent = formatNumber(currentCount + 1);
+        
+        // تحديث قاعدة البيانات
+        const { error } = await client
+            .from('video_files')
+            .update({ views: currentCount + 1 })
+            .eq('id', videoId);
+        
+        if (error) {
+            console.error('Error updating views:', error);
+            // إعادة القيمة القديمة في حالة الفشل
+            countElement.textContent = formatNumber(currentCount);
         }
     } catch (e) {
-        console.error('Error incrementing views', e);
+        console.error('Error in incrementView:', e);
     }
 }
 
@@ -414,7 +367,7 @@ async function deleteVideo(videoId) {
     
     try {
         // الحصول على بيانات الفيديو أولاً للحصول على المسار
-        const { data: video, error: fetchError } = await client
+        const {  video, error: fetchError } = await client
             .from('video_files')
             .select('path, url')
             .eq('id', videoId)
@@ -441,8 +394,7 @@ async function deleteVideo(videoId) {
             
         if (dbError) throw dbError;
         
-        // حذف جميع المشاهدات والإعجابات المرتبطة بهذا الفيديو
-        await client.from('views').delete().eq('video_id', videoId);
+        // حذف جميع الإعجابات المرتبطة بهذا الفيديو
         await client.from('video_likes').delete().eq('video_id', videoId);
         
         // تحديث القائمة
@@ -483,13 +435,13 @@ async function doUpload() {
 
     try {
         const path = `${Date.now()}_${sanitizeFilename(f.name)}`;
-        const { data: uploadData, error: uploadError } = await client.storage
+        const {  uploadData, error: uploadError } = await client.storage
             .from('videos')
             .upload(path, f, { upsert: true });
         
         if (uploadError) throw uploadError;
 
-        const { data: publicData } = await client.storage
+        const {  publicData } = await client.storage
             .from('videos')
             .getPublicUrl(path);
         
@@ -499,12 +451,14 @@ async function doUpload() {
         // الحصول على username من البيانات
         const username = user.user_metadata?.display_name || `مستخدم_${Date.now().toString(36).slice(2, 8)}`;
         
-        // إضافة الفيديو
+        // إضافة الفيديو مع تعيين قيمة لـ views
         const { error: dbError } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
             path: path,
-            username: username
+            username: username,
+            views: 0, // تعيين قيمة افتراضية لـ views
+            created_at: new Date().toISOString()
         }]);
         
         if (dbError) throw dbError;
@@ -572,7 +526,7 @@ async function auth() {
                 email: e, 
                 password: p, 
                 options: { 
-                    data: { 
+                     { 
                         display_name: u || `user_${Date.now().toString(36).slice(2, 8)}` 
                     } 
                 } 
