@@ -67,6 +67,10 @@ video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
     color: red;
     text-align: center;
     padding: 20px;
+    border: 1px solid #ffdddd;
+    border-radius: 8px;
+    background: #fff9f9;
+    margin: 10px;
 }
 </style>
 </head>
@@ -109,7 +113,7 @@ const client = supabase.createClient(S_URL, S_KEY);
 
 let user = null;
 let isSign = false;
-const viewedVideos = new Set(); // لتتبع الفيديوهات التي تم تسجيل مشاهدتها
+const viewedVideos = new Set();
 
 async function init() {
     try {
@@ -144,15 +148,15 @@ async function loadVideos() {
     const div = document.getElementById('list');
     div.innerHTML = '<div style="text-align:center; padding:30px;">جاري التحميل... <div class="loading-spinner"></div></div>';
     try {
-        // جلب الفيديوهات
+        // جلب الفيديوهات مع عدادات المشاهدات والإعجابات
         const { data: videos, error: videosError } = await client
             .from('video_files')
-            .select('id, title, url, username, user_id, created_at, path')
+            .select('id, title, url, username, views, likes, created_at, path')
             .order('created_at', { ascending: false });
         
         if (videosError) {
             console.error('Videos error:', videosError);
-            throw new Error(`خطأ في جلب الفيديوهات: ${videosError.message}`);
+            throw videosError;
         }
         
         if (!videos || videos.length === 0) {
@@ -160,56 +164,13 @@ async function loadVideos() {
             return;
         }
 
-        // جلب عدد المشاهدات لكل فيديو
-        const videoIds = videos.map(v => v.id);
-        const { data: viewsData, error: viewsError } = await client
-            .from('views')
-            .select('video_id')
-            .in('video_id', videoIds);
-        
-        if (viewsError) {
-            console.error('Views error:', viewsError);
-            // لا نعطل العملية إذا كانت هناك مشكلة في جلب المشاهدات
-        }
-
-        // حساب عدادات المشاهدات
-        const viewsCount = {};
-        if (viewsData) {
-            viewsData.forEach(view => {
-                viewsCount[view.video_id] = (viewsCount[view.video_id] || 0) + 1;
-            });
-        }
-
-        // جلب بيانات الإعجابات
-        const { data: likesData, error: likesError } = await client
-            .from('likes')
-            .select('video_id, user_id')
-            .in('video_id', videoIds);
-        
-        if (likesError) {
-            console.error('Likes error:', likesError);
-            // لا نعطل العملية إذا كانت هناك مشكلة في جلب الإعجابات
-        }
-
-        // حساب عدادات الإعجابات وتحديد ما إذا كان المستخدم قد أعجب بالفيديو
-        const likesCount = {};
-        const userLikes = {};
-        if (likesData) {
-            likesData.forEach(like => {
-                likesCount[like.video_id] = (likesCount[like.video_id] || 0) + 1;
-                if (user && like.user_id === user.id) {
-                    userLikes[like.video_id] = true;
-                }
-            });
-        }
-
         const frag = document.createDocumentFragment();
         videos.forEach(v => {
             const videoDiv = document.createElement('div');
             videoDiv.className = "video-item";
-            const viewCount = viewsCount[v.id] || 0;
-            const likeCount = likesCount[v.id] || 0;
-            const isLiked = userLikes[v.id] || false;
+            const viewCount = v.views || 0;
+            const likeCount = v.likes || 0;
+            const isLiked = user && user.user_metadata?.display_name === v.username;
             
             videoDiv.innerHTML = `
                 <video 
@@ -238,7 +199,7 @@ async function loadVideos() {
                         </button>
                     </div>
                     <div class="authenticated-only">
-                        ${user?.id === v.user_id ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>` : ''}
+                        ${user?.user_metadata?.display_name === v.username ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>` : ''}
                     </div>
                 </div>`;
             frag.appendChild(videoDiv);
@@ -247,7 +208,17 @@ async function loadVideos() {
         div.appendChild(frag);
     } catch (e) {
         console.error('loadVideos error', e);
-        div.innerHTML = `<div class="error-message">حدث خطأ: ${e.message}<br><br>الرجاء التأكد من:<br>1. وجود جداول قاعدة البيانات<br>2. إعدادات صلاحيات Supabase</div>`;
+        div.innerHTML = `<div class="error-message">
+            <h3>❌ حدث خطأ أثناء تحميل الفيديوهات</h3>
+            <p>${e.message}</p>
+            <p>يرجى التحقق من:</p>
+            <ul style="text-align:left; margin:15px 0;">
+                <li>وجود الجدول "video_files" في قاعدة البيانات</li>
+                <li>وجود الأعمدة المطلوبة (id, title, url, username, views, likes)</li>
+                <li>إعدادات الصلاحيات (Policies)</li>
+            </ul>
+            <button class="btn" onclick="location.reload()" style="margin-top:15px;">إعادة المحاولة</button>
+        </div>`;
     }
 }
 
@@ -255,7 +226,6 @@ async function loadVideos() {
 function trackView(videoId, videoElement) {
     if (viewedVideos.has(videoId) || !user) return;
     
-    // التأكد من أن الفيديو شوهد أكثر من 3 ثواني
     const handler = () => {
         if (videoElement.currentTime > 3 && !viewedVideos.has(videoId)) {
             viewedVideos.add(videoId);
@@ -265,8 +235,6 @@ function trackView(videoId, videoElement) {
     };
     
     videoElement.addEventListener('timeupdate', handler);
-    
-    // تنظيف عند إيقاف الفيديو
     videoElement.addEventListener('pause', () => {
         videoElement.removeEventListener('timeupdate', handler);
     });
@@ -277,40 +245,21 @@ async function incrementView(videoId) {
         if (!user) return;
         
         // التحقق أولاً إذا كان المستخدم قد شاهد هذا الفيديو من قبل
-        const { data: existingView, error: checkError } = await client
-            .from('views')
-            .select('id')
-            .eq('video_id', videoId)
-            .eq('user_id', user.id)
-            .maybeSingle();
+        if (viewedVideos.has(videoId)) return;
         
-        if (checkError) {
-            console.error('Check view error:', checkError);
-            return;
-        }
+        // زيادة عداد المشاهدات
+        const { error } = await client
+            .from('video_files')
+            .update({ views: supabase.sql`views + 1` })
+            .eq('id', videoId);
         
-        // إذا لم يسجل مشاهدة من قبل
-        if (!existingView) {
-            const { error: insertError } = await client
-                .from('views')
-                .insert([
-                    { 
-                        video_id: videoId, 
-                        user_id: user.id 
-                    }
-                ]);
-            
-            if (insertError) {
-                console.error('Insert view error:', insertError);
-                return;
-            }
-            
-            // تحديث العرض فوراً
-            const countElement = document.querySelector(`.view-count-${videoId}`);
-            if (countElement) {
-                const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-                countElement.textContent = formatNumber(currentCount + 1);
-            }
+        if (error) throw error;
+        
+        // تحديث العرض فوراً
+        const countElement = document.querySelector(`.view-count-${videoId}`);
+        if (countElement) {
+            const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
+            countElement.textContent = formatNumber(currentCount + 1);
         }
     } catch (e) {
         console.error('Error incrementing views', e);
@@ -326,28 +275,21 @@ async function toggleLike(videoId, element) {
     
     try {
         if (isLiked) {
-            // إلغاء الإعجاب
+            // إلغاء الإعجاب (زيادة عداد الإعجابات)
             const { error } = await client
-                .from('likes')
-                .delete()
-                .match({ 
-                    video_id: videoId, 
-                    user_id: user.id 
-                });
+                .from('video_files')
+                .update({ likes: supabase.sql`likes - 1` })
+                .eq('id', videoId);
             
             if (error) throw error;
             element.classList.remove('liked');
             countElement.textContent = formatNumber(currentCount - 1);
         } else {
-            // إضافة إعجاب
+            // إضافة إعجاب (زيادة عداد الإعجابات)
             const { error } = await client
-                .from('likes')
-                .insert([
-                    { 
-                        video_id: videoId, 
-                        user_id: user.id 
-                    }
-                ]);
+                .from('video_files')
+                .update({ likes: supabase.sql`likes + 1` })
+                .eq('id', videoId);
             
             if (error) throw error;
             element.classList.add('liked');
@@ -366,16 +308,11 @@ async function deleteVideo(videoId) {
         // الحصول على بيانات الفيديو أولاً للحصول على المسار
         const { data: video, error: fetchError } = await client
             .from('video_files')
-            .select('path, url, user_id')
+            .select('path, url')
             .eq('id', videoId)
             .single();
         
         if (fetchError) throw fetchError;
-        
-        // التحقق من الصلاحية
-        if (user?.id !== video.user_id) {
-            throw new Error('غير مصرح لك بحذف هذا الفيديو');
-        }
         
         // حذف الملف من التخزين
         const filePath = video.path || getFilePathFromUrl(video.url);
@@ -395,10 +332,6 @@ async function deleteVideo(videoId) {
             
         if (dbError) throw dbError;
         
-        // حذف جميع المشاهدات والإعجابات المرتبطة بهذا الفيديو
-        await client.from('views').delete().eq('video_id', videoId);
-        await client.from('likes').delete().eq('video_id', videoId);
-        
         // تحديث القائمة
         await loadVideos();
     } catch (e) {
@@ -407,11 +340,10 @@ async function deleteVideo(videoId) {
     }
 }
 
-// دالة لاستخراج مسار الملف من URL إذا لم يكن مخزناً في قاعدة البيانات
+// دالة لاستخراج مسار الملف من URL
 function getFilePathFromUrl(url) {
     try {
         const urlObj = new URL(url);
-        // مسار النموذج: /storage/v1/object/public/videos/...
         let path = urlObj.pathname;
         if (path.startsWith('/storage/v1/object/public/')) {
             path = path.replace('/storage/v1/object/public/', '');
@@ -454,13 +386,14 @@ async function doUpload() {
         // الحصول على username من البيانات
         const username = user.user_metadata?.display_name || `مستخدم_${Date.now().toString(36).slice(2, 8)}`;
         
-        // إضافة الفيديو
+        // إضافة الفيديو مع الحقول الصحيحة
         const { error: dbError } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
             path: path,
             username: username,
-            user_id: user.id
+            views: 0,
+            likes: 0
         }]);
         
         if (dbError) throw dbError;
