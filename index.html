@@ -264,11 +264,36 @@ const videoSessions = new Map();
 const activeComments = new Set();
 const likedVideos = new Set();
 
+// دالة تحقق من اتصال قاعدة البيانات
+async function checkDatabaseConnection() {
+    try {
+        const { data, error } = await client
+            .from('video_files')
+            .select('id')
+            .limit(1);
+        
+        if (error) {
+            console.error('Database connection error:', error);
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.error('Connection check failed:', error);
+        return false;
+    }
+}
+
 async function init() {
     try {
-        const {  { user: currentUser }, error } = await client.auth.getUser();
-        if (error) {
-            console.warn('auth.getUser error', error);
+        // التحقق من الاتصال أولاً
+        const isConnected = await checkDatabaseConnection();
+        if (!isConnected) {
+            throw new Error('لا يمكن الاتصال بقاعدة البيانات. الرجاء التحقق من الإعدادات.');
+        }
+
+        const { data: { user: currentUser }, error: authError } = await client.auth.getUser();
+        if (authError) {
+            console.warn('auth.getUser error', authError);
         }
         user = currentUser;
 
@@ -293,10 +318,8 @@ async function init() {
             document.getElementById('profileName').textContent = name;
             document.getElementById('profileEmail').textContent = user.email;
             
-            // تحميل حالة الإعجابات للمستخدم
-            if (user) {
-                await loadUserLikes();
-            }
+            // تحميل حالة الإعجابات
+            await loadUserLikes();
         } else {
             document.getElementById('nav').innerHTML = `<button class="btn" onclick="openAuth()">دخول</button>`;
             document.body.classList.remove('user-authenticated');
@@ -304,6 +327,7 @@ async function init() {
     } catch (e) {
         console.error('init error', e);
         document.getElementById('list').innerHTML = `<div class="error-message">خطأ في التهيئة: ${e.message}</div>`;
+        return;
     }
 
     if (currentView === 'home') {
@@ -315,7 +339,9 @@ async function init() {
 
 async function loadUserLikes() {
     try {
-        const {  userLikes, error } = await client
+        if (!user) return;
+        
+        const { data: userLikes, error } = await client
             .from('video_likes')
             .select('video_id')
             .eq('user_id', user.id);
@@ -334,13 +360,13 @@ async function loadVideos() {
     
     try {
         // جلب الفيديوهات
-        const {  videos, error: videosError } = await client
+        const { data: videos, error: videosError } = await client
             .from('video_files')
             .select('id, title, url, username, views, likes, created_at, path')
             .order('created_at', { ascending: false });
 
         if (videosError) {
-            throw new Error(videosError.message || 'فشل جلب الفيديوهات');
+            throw videosError;
         }
 
         if (!videos || videos.length === 0) {
@@ -348,18 +374,23 @@ async function loadVideos() {
             return;
         }
 
-        // جلب عدد التعليقات لكل فيديو
+        // جلب عدد التعليقات
         const videoIds = videos.map(v => v.id);
-        const {  commentsData, error: commentsError } = await client
-            .from('video_comments')
-            .select('video_id')
-            .in('video_id', videoIds);
-        
         const commentsCount = {};
-        if (!commentsError && commentsData) {
-            commentsData.forEach(comment => {
-                commentsCount[comment.video_id] = (commentsCount[comment.video_id] || 0) + 1;
-            });
+        
+        try {
+            const { data: commentsData, error: commentsError } = await client
+                .from('video_comments')
+                .select('video_id')
+                .in('video_id', videoIds);
+            
+            if (!commentsError && commentsData) {
+                commentsData.forEach(comment => {
+                    commentsCount[comment.video_id] = (commentsCount[comment.video_id] || 0) + 1;
+                });
+            }
+        } catch (commentsError) {
+            console.error('Comments count error:', commentsError);
         }
 
         const frag = document.createDocumentFragment();
@@ -426,7 +457,7 @@ async function loadVideos() {
         console.error('loadVideos error', e);
         div.innerHTML = `<div class="error-message">
             <h3>❌ حدث خطأ أثناء تحميل الفيديوهات</h3>
-            <p>${e.message}</p>
+            <p>${e.message || 'خطأ غير معروف'}</p>
             <button class="btn" onclick="location.reload()" style="margin-top:15px;">إعادة المحاولة</button>
         </div>`;
     }
@@ -465,7 +496,7 @@ async function loadUserProfile() {
     
     try {
         const username = user.user_metadata?.display_name || "مستخدم";
-        const {  userVideos, error } = await client
+        const { data: userVideos, error } = await client
             .from('video_files')
             .select('id, title, url, views, likes, created_at, path')
             .eq('username', username)
@@ -570,6 +601,7 @@ async function incrementView(videoId) {
         
         if (error) {
             console.error('View update error:', error);
+            // إعادة القيمة القديمة في حالة الخطأ
             countElement.textContent = formatNumber(currentCount);
         }
     } catch (e) {
@@ -618,12 +650,10 @@ async function toggleLike(videoId, element) {
             // إضافة إعجاب
             const { error: insertError } = await client
                 .from('video_likes')
-                .insert([
-                    { 
-                        video_id: videoId, 
-                        user_id: user.id 
-                    }
-                ]);
+                .insert([{
+                    video_id: videoId,
+                    user_id: user.id
+                }]);
             
             if (insertError) throw insertError;
             
@@ -694,7 +724,7 @@ async function loadComments(videoId) {
     commentsList.innerHTML = 'جاري تحميل التعليقات...';
     
     try {
-        const {  comments, error } = await client
+        const { data: comments, error } = await client
             .from('video_comments')
             .select('*')
             .eq('video_id', videoId)
@@ -759,14 +789,12 @@ async function addComment(videoId) {
         
         const { error } = await client
             .from('video_comments')
-            .insert([
-                {
-                    video_id: videoId,
-                    user_id: user.id,
-                    username: username,
-                    content: commentText
-                }
-            ]);
+            .insert([{
+                video_id: videoId,
+                user_id: user.id,
+                username: username,
+                content: commentText
+            }]);
         
         if (error) throw error;
         
@@ -817,7 +845,7 @@ async function deleteVideo(videoId) {
     
     try {
         // الحصول على بيانات الفيديو
-        const {  video, error: fetchError } = await client
+        const { data: video, error: fetchError } = await client
             .from('video_files')
             .select('path')
             .eq('id', videoId)
@@ -862,7 +890,8 @@ async function deleteVideo(videoId) {
     }
 }
 
-document.getElementById('upBtn').addEventListener('click', async () => {
+document.getElementById('upBtn').addEventListener('click', doUpload);
+async function doUpload() {
     const t = document.getElementById('vTitle').value.trim();
     const fileInput = document.getElementById('vFile');
     const f = fileInput.files[0];
@@ -891,11 +920,11 @@ document.getElementById('upBtn').addEventListener('click', async () => {
         
         if (uploadError) throw uploadError;
 
-        const {  { publicUrl }, error: urlError } = await client.storage
+        const { data: publicData, error: urlError } = await client.storage
             .from('videos')
             .getPublicUrl(path);
         
-        const publicUrl = publicUrl;
+        const publicUrl = publicData?.publicUrl;
         
         if (urlError || !publicUrl) {
             throw new Error('فشل الحصول على رابط الملف العام');
@@ -934,7 +963,7 @@ document.getElementById('upBtn').addEventListener('click', async () => {
         btn.disabled = false;
         btn.innerHTML = "رفع الآن";
     }
-});
+}
 
 function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -954,7 +983,8 @@ function toggleA() {
     document.getElementById('authError').textContent = '';
 }
 
-document.getElementById('aConfirmBtn').addEventListener('click', async () => {
+document.getElementById('aConfirmBtn').addEventListener('click', auth);
+async function auth() {
     const e = document.getElementById('aEmail').value.trim();
     const p = document.getElementById('aPass').value;
     const u = document.getElementById('aUser').value.trim();
@@ -980,7 +1010,7 @@ document.getElementById('aConfirmBtn').addEventListener('click', async () => {
                 email: e, 
                 password: p, 
                 options: { 
-                     { 
+                    data: { 
                         display_name: u || `user_${Date.now().toString(36).slice(2, 8)}` 
                     } 
                 } 
@@ -1002,7 +1032,7 @@ document.getElementById('aConfirmBtn').addEventListener('click', async () => {
         btn.disabled = false;
         btn.innerHTML = "تأكيد";
     }
-});
+}
 
 document.getElementById('aModal').addEventListener('click', (e) => {
     if (e.target.id === 'aModal') {
@@ -1024,6 +1054,7 @@ function sanitizeFilename(name) {
     return name.replace(/[^a-zA-Z0-9.\-_ء-ي ]/g, '_').replace(/\s+/g, '_');
 }
 
+// بدء التهيئة عند تحميل الصفحة
 document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
