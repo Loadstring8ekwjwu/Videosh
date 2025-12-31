@@ -182,7 +182,7 @@ const activeComments = new Set(); // لتتبع الفيديوهات المعر�
 
 async function init() {
     try {
-        const {  { user: currentUser }, error } = await client.auth.getUser();
+        const { data: { user: currentUser }, error } = await client.auth.getUser();
         if (error) {
             console.warn('auth.getUser error', error);
         }
@@ -214,9 +214,9 @@ async function loadVideos() {
     div.innerHTML = '<div style="text-align:center; padding:30px;">جاري التحميل... <div class="loading-spinner"></div></div>';
     try {
         // جلب الفيديوهات
-        const {  videos, error: videosError } = await client
+        const { data: videos, error: videosError } = await client
             .from('video_files')
-            .select('id, title, url, username, views, created_at, path')
+            .select('id, title, url, username, views, likes, created_at, path')
             .order('created_at', { ascending: false });
         
         if (videosError) {
@@ -232,7 +232,7 @@ async function loadVideos() {
         // جلب حالة الإعجابات للمستخدم الحالي
         const likedVideos = new Set();
         if (user) {
-            const {  userLikes, error: likesError } = await client
+            const { data: userLikes, error: likesError } = await client
                 .from('video_likes')
                 .select('video_id')
                 .eq('user_id', user.id);
@@ -244,7 +244,7 @@ async function loadVideos() {
 
         // جلب عدد الإعجابات لجميع الفيديوهات
         const likesCount = {};
-        const {  allLikes, error: allLikesError } = await client
+        const { data: allLikes, error: allLikesError } = await client
             .from('video_likes')
             .select('video_id');
         
@@ -256,7 +256,7 @@ async function loadVideos() {
 
         // جلب التعليقات لجميع الفيديوهات
         const commentsCount = {};
-        const {  allComments, error: commentsError } = await client
+        const { data: allComments, error: commentsError } = await client
             .from('video_comments')
             .select('video_id');
         
@@ -271,7 +271,7 @@ async function loadVideos() {
             const videoDiv = document.createElement('div');
             videoDiv.className = "video-item";
             const viewCount = v.views || 0;
-            const likeCount = likesCount[v.id] || 0;
+            const likeCount = v.likes || 0; // استخدام القيمة من قاعدة البيانات مباشرة
             const commentCount = commentsCount[v.id] || 0;
             const isLiked = likedVideos.has(v.id);
             
@@ -373,56 +373,28 @@ function endViewTracking(videoId) {
 // دالة لتسجيل المشاهدة في قاعدة البيانات
 async function recordView(videoId) {
     try {
-        // التحقق أولاً إذا كان المستخدم قد شاهد هذا الفيديو من قبل
-        const { data: existingView, error: checkError } = await client
-            .from('video_views')
-            .select('id')
-            .eq('video_id', videoId)
-            .eq('user_id', user.id)
-            .maybeSingle();
+        // الحصول على القيمة الحالية من الواجهة
+        const countElement = document.querySelector(`.view-count-${videoId}`);
+        if (!countElement) return;
         
-        if (checkError && checkError.code !== 'PGRST116') { // PGRST116: no rows returned
-            console.error('Check view error:', checkError);
-            return;
-        }
+        const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
         
-        // إذا لم يسجل مشاهدة من قبل
-        if (!existingView) {
-            // تسجيل المشاهدة في جدول المشاهدات
-            const { error: insertError } = await client
-                .from('video_views')
-                .insert([
-                    { 
-                        video_id: videoId, 
-                        user_id: user.id 
-                    }
-                ]);
-            
-            if (insertError) {
-                console.error('Insert view error:', insertError);
-                return;
-            }
-            
-            // تحديث عداد المشاهدات في جدول الفيديوهات
-            const { error: updateError } = await client
-                .from('video_files')
-                .update({ views: supabase.rpc('increment') })
-                .eq('id', videoId);
-            
-            if (updateError) {
-                console.error('Update views error:', updateError);
-                return;
-            }
-            
-            // تحديث العرض فوراً
-            const countElement = document.querySelector(`.view-count-${videoId}`);
-            if (countElement) {
-                const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-                countElement.textContent = formatNumber(currentCount + 1);
-            }
+        // تحديث العداد في الواجهة
+        countElement.textContent = formatNumber(currentCount + 1);
+        
+        // تحديث قاعدة البيانات
+        const { error } = await client
+            .from('video_files')
+            .update({ views: currentCount + 1 })
+            .eq('id', videoId);
+        
+        if (error) {
+            console.error('View update error:', error);
+            // إعادة القيمة القديمة في حالة الخطأ
+            countElement.textContent = formatNumber(currentCount);
         }
     } catch (e) {
-        console.error('Error recording view:', e);
+        console.error('Error in incrementView:', e);
     }
 }
 
@@ -454,6 +426,12 @@ async function toggleLike(videoId, element) {
             
             element.classList.remove('liked');
             countElement.textContent = formatNumber(currentCount - 1);
+            
+            // تحديث قاعدة البيانات لجدول الفيديوهات
+            await client
+                .from('video_files')
+                .update({ likes: currentCount - 1 })
+                .eq('id', videoId);
         } else {
             // إضافة إعجاب
             const { error } = await client
@@ -469,6 +447,12 @@ async function toggleLike(videoId, element) {
             
             element.classList.add('liked');
             countElement.textContent = formatNumber(currentCount + 1);
+            
+            // تحديث قاعدة البيانات لجدول الفيديوهات
+            await client
+                .from('video_files')
+                .update({ likes: currentCount + 1 })
+                .eq('id', videoId);
         }
     } catch (e) {
         console.error('Error toggling like:', e);
@@ -525,7 +509,7 @@ async function loadComments(videoId) {
     commentsList.innerHTML = 'جاري تحميل التعليقات...';
     
     try {
-        const {  comments, error } = await client
+        const { data: comments, error } = await client
             .from('video_comments')
             .select('*')
             .eq('video_id', videoId)
@@ -679,7 +663,6 @@ async function deleteVideo(videoId) {
         
         // حذف الإعجابات والمشاهدات والتعليقات المرتبطة
         await client.from('video_likes').delete().eq('video_id', videoId);
-        await client.from('video_views').delete().eq('video_id', videoId);
         await client.from('video_comments').delete().eq('video_id', videoId);
         
         // تحديث القائمة
@@ -707,13 +690,13 @@ async function doUpload() {
 
     try {
         const path = `${Date.now()}_${sanitizeFilename(f.name)}`;
-        const {  uploadData, error: uploadError } = await client.storage
+        const { data: uploadData, error: uploadError } = await client.storage
             .from('videos')
             .upload(path, f, { upsert: true });
         
         if (uploadError) throw uploadError;
 
-        const {  publicData } = await client.storage
+        const { data: publicData } = await client.storage
             .from('videos')
             .getPublicUrl(path);
         
@@ -729,6 +712,7 @@ async function doUpload() {
             path: path,
             username: username,
             views: 0,
+            likes: 0, // تعيين قيمة 0 لـ likes
             created_at: new Date().toISOString()
         }]);
         
@@ -798,7 +782,7 @@ async function auth() {
                 email: e, 
                 password: p, 
                 options: { 
-                     { 
+                    data: { 
                         display_name: u || `user_${Date.now().toString(36).slice(2, 8)}` 
                     } 
                 } 
