@@ -188,14 +188,6 @@ video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
     font-size: 0.9rem;
     margin-bottom: 15px;
 }
-.storage-error {
-    background: #fff3cd;
-    border: 1px solid #ffeaa7;
-    color: #856404;
-    padding: 15px;
-    border-radius: 8px;
-    margin: 15px 0;
-}
 </style>
 </head>
 <body>
@@ -267,9 +259,9 @@ const client = supabase.createClient(S_URL, S_KEY);
 
 let user = null;
 let isSign = false;
-let currentView = 'home'; // 'home' أو 'profile'
-const videoSessions = new Map(); // لتتبع جلسة المشاهدة لكل فيديو
-const activeComments = new Set(); // لتتبع الفيديوهات المعروضة تعليقاتها
+let currentView = 'home';
+const videoSessions = new Map();
+const activeComments = new Set();
 
 async function init() {
     try {
@@ -296,7 +288,6 @@ async function init() {
             document.getElementById('upSection').style.display = 'block';
             document.body.classList.add('user-authenticated');
             
-            // تعيين الحرف الأول في الأفاتار
             document.getElementById('profileAvatar').textContent = firstLetter;
             document.getElementById('profileName').textContent = name;
             document.getElementById('profileEmail').textContent = user.email;
@@ -319,58 +310,21 @@ async function init() {
 async function loadVideos() {
     const div = document.getElementById('list');
     div.innerHTML = '<div style="text-align:center; padding:30px;">جاري التحميل... <div class="loading-spinner"></div></div>';
+    
     try {
-        // جلب الفيديوهات
-        const { data: videos, error: videosError } = await client
+        // جلب الفيديوهات مع جميع الحقول المطلوبة
+        const { data: videos, error } = await client
             .from('video_files')
-            .select('id, title, url, username, views, likes, created_at, path')
+            .select('id, title, url, username, views, likes, created_at')
             .order('created_at', { ascending: false });
-        
-        if (videosError) {
-            console.error('Videos fetch error:', videosError);
-            throw new Error(videosError.message || 'خطأ في جلب الفيديوهات');
+
+        if (error) {
+            throw new Error(error.message || 'فشل جلب الفيديوهات');
         }
-        
+
         if (!videos || videos.length === 0) {
             div.innerHTML = "<div style='text-align: center; padding: 30px;'>لا يوجد فيديوهات.</div>";
             return;
-        }
-
-        // جلب حالة الإعجابات للمستخدم الحالي
-        const likedVideos = new Set();
-        if (user) {
-            const {  userLikes, error: likesError } = await client
-                .from('video_likes')
-                .select('video_id')
-                .eq('user_id', user.id);
-            
-            if (!likesError && userLikes) {
-                userLikes.forEach(like => likedVideos.add(like.video_id));
-            }
-        }
-
-        // جلب عدد الإعجابات لجميع الفيديوهات
-        const likesCount = {};
-        const {  allLikes, error: allLikesError } = await client
-            .from('video_likes')
-            .select('video_id');
-        
-        if (!allLikesError && allLikes) {
-            allLikes.forEach(like => {
-                likesCount[like.video_id] = (likesCount[like.video_id] || 0) + 1;
-            });
-        }
-
-        // جلب التعليقات لجميع الفيديوهات
-        const commentsCount = {};
-        const { data: allComments, error: commentsError } = await client
-            .from('video_comments')
-            .select('video_id');
-        
-        if (!commentsError && allComments) {
-            allComments.forEach(comment => {
-                commentsCount[comment.video_id] = (commentsCount[comment.video_id] || 0) + 1;
-            });
         }
 
         const frag = document.createDocumentFragment();
@@ -378,9 +332,7 @@ async function loadVideos() {
             const videoDiv = document.createElement('div');
             videoDiv.className = "video-item";
             const viewCount = v.views || 0;
-            const likeCount = v.likes || 0; // استخدام القيمة من قاعدة البيانات مباشرة
-            const commentCount = commentsCount[v.id] || 0;
-            const isLiked = likedVideos.has(v.id);
+            const likeCount = v.likes || 0;
             
             videoDiv.innerHTML = `
                 <video 
@@ -400,31 +352,18 @@ async function loadVideos() {
                 </div>
                 <div class="video-stats">
                     <div class="stats-container">
-                        <button class="stat-btn" title="مشاهدات">
-                            <span>👀</span> <span class="view-count-${v.id}">${formatNumber(viewCount)}</span>
+                        <button class="stat-btn" title="مشاهدات" disabled>
+                            <span>👀</span> <span>${formatNumber(viewCount)}</span>
                         </button>
-                        <button class="stat-btn ${isLiked ? 'liked' : ''}" 
-                                data-id="${v.id}" 
-                                onclick="toggleLike(${v.id}, this)">
-                            <span>❤️</span> <span class="like-count-${v.id}">${formatNumber(likeCount)}</span>
+                        <button class="stat-btn" title="إعجابات" disabled>
+                            <span>❤️</span> <span>${formatNumber(likeCount)}</span>
                         </button>
-                        <button class="stat-btn" 
-                                data-id="${v.id}" 
-                                onclick="toggleComments(${v.id}, this)">
-                            <span>💬</span> <span class="comment-count-${v.id}">${formatNumber(commentCount)}</span>
+                        <button class="stat-btn" title="تعليقات" disabled>
+                            <span>💬</span> <span>0</span>
                         </button>
                     </div>
                     <div class="authenticated-only">
-                        ${user?.user_metadata?.display_name === v.username ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>` : ''}
-                    </div>
-                </div>
-                <div id="comments-section-${v.id}" class="comments-section">
-                    <div class="comment-input-container">
-                        <textarea id="comment-input-${v.id}" class="comment-input" placeholder="اكتب تعليقك هنا..." rows="2"></textarea>
-                        <button class="comment-btn" onclick="addComment(${v.id})">إرسال</button>
-                    </div>
-                    <div id="comments-list-${v.id}" class="comments-list">
-                        جاري تحميل التعليقات...
+                        ${user?.user_metadata?.display_name === v.username ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;">حذف</button>` : ''}
                     </div>
                 </div>`;
             frag.appendChild(videoDiv);
@@ -443,33 +382,47 @@ async function loadVideos() {
     }
 }
 
-// دالة لتحميل صفحة الملف الشخصي
-async function loadUserProfile() {
+function showProfileSection() {
+    document.getElementById('homeSection').style.display = 'none';
+    document.getElementById('profileSection').style.display = 'block';
+    currentView = 'profile';
+    document.title = "ملفي - فيديو شير";
+}
+
+function showHome() {
+    document.getElementById('profileSection').style.display = 'none';
+    document.getElementById('homeSection').style.display = 'block';
+    currentView = 'home';
+    document.title = "فيديو شير - النسخة النهائية";
+    loadVideos();
+}
+
+function showProfile() {
     if (!user) {
-        alert("يجب تسجيل الدخول لعرض الملف الشخصي");
+        alert("يجب تسجيل الدخول أولاً");
         openAuth();
         return;
     }
-    
     showProfileSection();
+    loadUserProfile();
+}
+
+async function loadUserProfile() {
+    if (!user) return;
     
-    const username = user.user_metadata?.display_name || "مستخدم";
-    const userId = user.id;
-    
-    // جلب فيديوهات المستخدم
     const videosDiv = document.getElementById('userVideos');
     videosDiv.innerHTML = '<div style="text-align:center; padding:20px;">جاري تحميل الفيديوهات... <div class="loading-spinner"></div></div>';
     
     try {
-        const {  userVideos, error: videosError } = await client
+        const username = user.user_metadata?.display_name || "مستخدم";
+        const { data: userVideos, error } = await client
             .from('video_files')
-            .select('id, title, url, views, likes, created_at, path')
+            .select('id, title, url, views, likes, created_at')
             .eq('username', username)
             .order('created_at', { ascending: false });
+
+        if (error) throw error;
         
-        if (videosError) throw videosError;
-        
-        // حساب الإحصائيات
         let totalVideos = 0;
         let totalViews = 0;
         let totalLikes = 0;
@@ -479,7 +432,6 @@ async function loadUserProfile() {
             totalViews = userVideos.reduce((sum, video) => sum + (video.views || 0), 0);
             totalLikes = userVideos.reduce((sum, video) => sum + (video.likes || 0), 0);
             
-            // عرض الفيديوهات
             let videosHTML = '';
             userVideos.forEach(v => {
                 videosHTML += `
@@ -492,14 +444,14 @@ async function loadUserProfile() {
                             </div>
                             <div class="video-stats">
                                 <div class="stats-container">
-                                    <button class="stat-btn" title="مشاهدات">
+                                    <button class="stat-btn" title="مشاهدات" disabled>
                                         <span>👀</span> <span>${formatNumber(v.views || 0)}</span>
                                     </button>
-                                    <button class="stat-btn" title="إعجابات">
+                                    <button class="stat-btn" title="إعجابات" disabled>
                                         <span>❤️</span> <span>${formatNumber(v.likes || 0)}</span>
                                     </button>
                                 </div>
-                                <button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>
+                                <button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;">حذف</button>
                             </div>
                         </div>
                     </div>
@@ -511,7 +463,6 @@ async function loadUserProfile() {
             videosDiv.innerHTML = "<div style='text-align: center; padding: 30px; color:#888;'>لم تقم برفع أي فيديوهات بعد</div>";
         }
         
-        // تحديث الإحصائيات
         document.getElementById('videoCount').textContent = totalVideos;
         document.getElementById('totalViews').textContent = formatNumber(totalViews);
         document.getElementById('totalLikes').textContent = formatNumber(totalLikes);
@@ -522,50 +473,19 @@ async function loadUserProfile() {
     }
 }
 
-// دالة لعرض قسم الملف الشخصي
-function showProfileSection() {
-    document.getElementById('homeSection').style.display = 'none';
-    document.getElementById('profileSection').style.display = 'block';
-    currentView = 'profile';
-    document.title = "ملفي - فيديو شير";
-}
-
-// دالة للعودة إلى الصفحة الرئيسية
-function showHome() {
-    document.getElementById('profileSection').style.display = 'none';
-    document.getElementById('homeSection').style.display = 'block';
-    currentView = 'home';
-    document.title = "فيديو شير - النسخة النهائية";
-    loadVideos();
-}
-
-// دالة لعرض الملف الشخصي
-function showProfile() {
-    if (!user) {
-        alert("يجب تسجيل الدخول أولاً");
-        openAuth();
-        return;
-    }
-    loadUserProfile();
-}
-
-// دالة لبدء تتبع المشاهدة
 function startViewTracking(videoId, videoElement) {
     if (!user) return;
     
-    // إذا كانت هناك جلسة سابقة، ننهيها أولاً
     if (videoSessions.has(videoId)) {
         endViewTracking(videoId);
     }
     
-    // بدء جلسة جديدة
     const sessionId = Date.now();
     videoSessions.set(videoId, {
         id: sessionId,
         startTime: Date.now(),
         element: videoElement,
         timeout: setTimeout(() => {
-            // إذا لم يتم إيقاف التتبع بعد 3 ثواني، نسجل المشاهدة
             if (videoSessions.get(videoId)?.id === sessionId) {
                 recordView(videoId);
                 videoSessions.delete(videoId);
@@ -574,7 +494,6 @@ function startViewTracking(videoId, videoElement) {
     });
 }
 
-// دالة لإنهاء تتبع المشاهدة
 function endViewTracking(videoId) {
     const session = videoSessions.get(videoId);
     if (session) {
@@ -583,317 +502,22 @@ function endViewTracking(videoId) {
     }
 }
 
-// دالة لتسجيل المشاهدة في قاعدة البيانات
 async function recordView(videoId) {
     try {
-        // الحصول على القيمة الحالية من الواجهة
-        const countElement = document.querySelector(`.view-count-${videoId}`);
-        if (!countElement) return;
-        
-        const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-        
-        // تحديث العداد في الواجهة
-        countElement.textContent = formatNumber(currentCount + 1);
-        
-        // تحديث قاعدة البيانات
         const { error } = await client
             .from('video_files')
-            .update({ views: currentCount + 1 })
+            .update({ views: supabase.rpc('increment') })
             .eq('id', videoId);
         
         if (error) {
             console.error('View update error:', error);
-            // إعادة القيمة القديمة في حالة الخطأ
-            countElement.textContent = formatNumber(currentCount);
         }
     } catch (e) {
         console.error('Error in incrementView:', e);
     }
 }
 
-async function toggleLike(videoId, element) {
-    if (!user) {
-        alert("يجب تسجيل الدخول للإعجاب بالفيديوهات");
-        openAuth();
-        return;
-    }
-    
-    const isLiked = element.classList.contains('liked');
-    const countElement = element.querySelector(`.like-count-${videoId}`);
-    if (!countElement) return;
-    
-    let currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-    
-    try {
-        if (isLiked) {
-            // إلغاء الإعجاب
-            const { error } = await client
-                .from('video_likes')
-                .delete()
-                .match({ 
-                    video_id: videoId, 
-                    user_id: user.id 
-                });
-            
-            if (error) throw error;
-            
-            element.classList.remove('liked');
-            countElement.textContent = formatNumber(currentCount - 1);
-            
-            // تحديث قاعدة البيانات لجدول الفيديوهات
-            await client
-                .from('video_files')
-                .update({ likes: currentCount - 1 })
-                .eq('id', videoId);
-        } else {
-            // إضافة إعجاب
-            const { error } = await client
-                .from('video_likes')
-                .insert([
-                    { 
-                        video_id: videoId, 
-                        user_id: user.id 
-                    }
-                ]);
-            
-            if (error) throw error;
-            
-            element.classList.add('liked');
-            countElement.textContent = formatNumber(currentCount + 1);
-            
-            // تحديث قاعدة البيانات لجدول الفيديوهات
-            await client
-                .from('video_files')
-                .update({ likes: currentCount + 1 })
-                .eq('id', videoId);
-        }
-    } catch (e) {
-        console.error('Error toggling like:', e);
-        alert('حدث خطأ أثناء عملية الإعجاب: ' + (e.message || 'خطأ غير معروف'));
-        
-        // إعادة القيمة الأصلية في حالة الخطأ
-        countElement.textContent = formatNumber(currentCount);
-        if (isLiked) {
-            element.classList.add('liked');
-        } else {
-            element.classList.remove('liked');
-        }
-    }
-}
-
-// دالة لعرض/إخفاء قسم التعليقات
-function toggleComments(videoId, element) {
-    if (!user) {
-        alert("يجب تسجيل الدخول لكتابة التعليقات");
-        openAuth();
-        return;
-    }
-    
-    const commentsSection = document.getElementById(`comments-section-${videoId}`);
-    const commentsList = document.getElementById(`comments-list-${videoId}`);
-    const inputElement = document.getElementById(`comment-input-${videoId}`);
-    
-    if (activeComments.has(videoId)) {
-        // إخفاء التعليقات
-        commentsSection.style.display = 'none';
-        activeComments.delete(videoId);
-        element.classList.remove('comments-active');
-    } else {
-        // إظهار التعليقات وتحميلها
-        commentsSection.style.display = 'block';
-        activeComments.add(videoId);
-        element.classList.add('comments-active');
-        
-        // تحميل التعليقات إذا لم تكن محملة من قبل
-        if (commentsList.innerHTML === 'جاري تحميل التعليقات...') {
-            loadComments(videoId);
-        }
-        
-        // وضع التركيز على مربع التعليق
-        setTimeout(() => {
-            inputElement.focus();
-        }, 100);
-    }
-}
-
-// دالة لتحميل التعليقات
-async function loadComments(videoId) {
-    const commentsList = document.getElementById(`comments-list-${videoId}`);
-    commentsList.innerHTML = 'جاري تحميل التعليقات...';
-    
-    try {
-        const {  comments, error } = await client
-            .from('video_comments')
-            .select('*')
-            .eq('video_id', videoId)
-            .order('created_at', { ascending: false });
-        
-        if (error) throw error;
-        
-        if (!comments || comments.length === 0) {
-            commentsList.innerHTML = `<div class="comment-empty">لا يوجد تعليقات لهذا الفيديو</div>`;
-            return;
-        }
-        
-        let html = '';
-        comments.forEach(comment => {
-            const timeAgo = getTimeAgo(new Date(comment.created_at));
-            html += `
-                <div class="comment-item">
-                    <div class="comment-header">
-                        <span>${escapeHtml(comment.username)}</span>
-                        <span class="comment-time">${timeAgo}</span>
-                    </div>
-                    <div class="comment-content">${escapeHtml(comment.content)}</div>
-                </div>
-            `;
-        });
-        
-        commentsList.innerHTML = html;
-        
-        // تحديث عداد التعليقات
-        const countElement = document.querySelector(`.comment-count-${videoId}`);
-        if (countElement) {
-            countElement.textContent = formatNumber(comments.length);
-        }
-    } catch (e) {
-        console.error('Error loading comments:', e);
-        commentsList.innerHTML = `<div class="error-message">فشل تحميل التعليقات</div>`;
-    }
-}
-
-// دالة لإضافة تعليق جديد
-async function addComment(videoId) {
-    if (!user) {
-        alert("يجب تسجيل الدخول لكتابة التعليقات");
-        openAuth();
-        return;
-    }
-    
-    const inputElement = document.getElementById(`comment-input-${videoId}`);
-    const commentText = inputElement.value.trim();
-    
-    if (!commentText) {
-        alert("يرجى كتابة تعليق");
-        return;
-    }
-    
-    const btn = inputElement.nextElementSibling;
-    const originalText = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = "جاري الإرسال...";
-    
-    try {
-        const username = user.user_metadata?.display_name || "مستخدم";
-        
-        const { error } = await client
-            .from('video_comments')
-            .insert([
-                {
-                    video_id: videoId,
-                    user_id: user.id,
-                    username: username,
-                    content: commentText
-                }
-            ]);
-        
-        if (error) throw error;
-        
-        // مسح مربع التعليق
-        inputElement.value = '';
-        
-        // إعادة تحميل التعليقات
-        loadComments(videoId);
-        
-        // تحديث عداد التعليقات في الواجهة
-        const countElement = document.querySelector(`.comment-count-${videoId}`);
-        if (countElement) {
-            const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-            countElement.textContent = formatNumber(currentCount + 1);
-        }
-        
-    } catch (e) {
-        console.error('Error adding comment:', e);
-        alert('فشل إضافة التعليق: ' + (e.message || 'خطأ غير معروف'));
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
-    }
-}
-
-// دالة لحساب الوقت المنقضي
-function getTimeAgo(date) {
-    const now = new Date();
-    const diff = now - date;
-    
-    const seconds = Math.floor(diff / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-    
-    if (days > 0) {
-        return `${days} يوم${days > 1 ? 'ين' : ''} مضى`;
-    } else if (hours > 0) {
-        return `${hours} ساعة${hours > 1 ? 'تان' : ' واحدة'} مضت`;
-    } else if (minutes > 0) {
-        return `${minutes} دقيقة${minutes > 1 ? 'تين' : ' واحدة'} مضت`;
-    } else {
-        return `${seconds} ثانية مضت`;
-    }
-}
-
-async function deleteVideo(videoId) {
-    if (!confirm('هل أنت متأكد من حذف هذا الفيديو؟')) return;
-    
-    try {
-        // الحصول على بيانات الفيديو
-        const {  video, error: fetchError } = await client
-            .from('video_files')
-            .select('path, url')
-            .eq('id', videoId)
-            .single();
-        
-        if (fetchError) throw fetchError;
-        
-        // حذف الملف من التخزين
-        if (video.path) {
-            const { error: storageError } = await client.storage
-                .from('videos')
-                .remove([video.path]);
-            
-            if (storageError) {
-                console.warn('Storage delete error:', storageError);
-            }
-        }
-        
-        // حذف السجل من قاعدة البيانات
-        const { error: dbError } = await client
-            .from('video_files')
-            .delete()
-            .eq('id', videoId);
-            
-        if (dbError) throw dbError;
-        
-        // حذف الإعجابات والمشاهدات والتعليقات المرتبطة
-        await client.from('video_likes').delete().eq('video_id', videoId);
-        await client.from('video_comments').delete().eq('video_id', videoId);
-        
-        // تحديث القائمة المناسبة
-        if (currentView === 'home') {
-            await loadVideos();
-        } else {
-            await loadUserProfile();
-        }
-        
-        alert('تم حذف الفيديو بنجاح!');
-    } catch (e) {
-        console.error('Error deleting video', e);
-        alert('حدث خطأ أثناء حذف الفيديو: ' + e.message);
-    }
-}
-
-document.getElementById('upBtn').addEventListener('click', doUpload);
-async function doUpload() {
+document.getElementById('upBtn').addEventListener('click', async () => {
     const t = document.getElementById('vTitle').value.trim();
     const fileInput = document.getElementById('vFile');
     const f = fileInput.files[0];
@@ -906,47 +530,33 @@ async function doUpload() {
     btn.innerHTML = "جاري الرفع... <div class='loading-spinner' style='display:inline-block; width:16px; height:16px; margin-left:10px;'></div>";
 
     try {
-        // التحقق من إعدادات التخزين أولاً
-        await checkStorageBucket();
-        
         const path = `${Date.now()}_${sanitizeFilename(f.name)}`;
-        const { data: uploadData, error: uploadError } = await client.storage
+        const { error: uploadError } = await client.storage
             .from('videos')
             .upload(path, f, { upsert: true });
         
-        if (uploadError) {
-            console.error('Upload error:', uploadError);
-            throw new Error(uploadError.message || 'فشل رفع الملف');
-        }
+        if (uploadError) throw uploadError;
 
-        // الطريقة الصحيحة للحصول على الرابط العام في أحدث إصدار
-        const { data: { publicUrl }, error: urlError } = await client.storage
+        const { data } = await client.storage
             .from('videos')
             .getPublicUrl(path);
         
-        const publicUrl = publicUrl;
-        
-        if (urlError || !publicUrl) {
-            console.error('URL error:', urlError);
-            throw new Error('فشل الحصول على رابط الملف العام - تحقق من سياسات التخزين');
-        }
+        const publicUrl = data?.publicUrl;
+        if (!publicUrl) throw new Error('لم يتم الحصول على رابط الملف العام');
 
         const username = user.user_metadata?.display_name || `مستخدم_${Date.now().toString(36).slice(2, 8)}`;
         
-        // إضافة الفيديو مع تعيين جميع الحقول المطلوبة
         const { error: dbError } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
             path: path,
             username: username,
             views: 0,
-            likes: 0,
-            created_at: new Date().toISOString()
+            likes: 0
         }]);
         
         if (dbError) throw dbError;
 
-        // تحديث القائمة
         if (currentView === 'home') {
             await loadVideos();
         } else {
@@ -962,52 +572,13 @@ async function doUpload() {
 
     } catch (e) {
         console.error('Upload error', e);
-        let errorMessage = e.message || 'خطأ غير معروف';
-        
-        // إذا كانت المشكلة في التخزين، نقدم حلولاً
-        if (errorMessage.includes('storage') || errorMessage.includes('bucket')) {
-            errorMessage = `
-                يبدو أن هناك مشكلة في إعدادات التخزين. الرجاء التحقق من:
-                1. وجود Bucket باسم "videos" في قسم Storage
-                2. وجود سياسات (Policies) تسمح بالقراءة والكتابة
-                3. الصلاحيات الصحيحة للـ Bucket
-                
-                <div class="storage-error">
-                    <strong>حل مؤقت:</strong> حاول إعادة تحميل الصفحة أو الاتصال بمسؤول النظام
-                </div>
-            `;
-        }
-        
-        document.getElementById('list').innerHTML = `<div class="error-message">${errorMessage}</div>`;
+        alert("حدث خطأ أثناء الرفع: " + (e.message || 'خطأ غير معروف'));
         btn.disabled = false;
         btn.innerHTML = "رفع الآن";
     }
-}
-
-// دالة للتحقق من وجود Bucket وصلاحياته
-async function checkStorageBucket() {
-    try {
-        // محاولة الحصول على قائمة الملفات في الـ Bucket
-        const {  files, error: listError } = await client.storage
-            .from('videos')
-            .list('', {
-                limit: 1,
-                offset: 0
-            });
-        
-        if (listError && listError.message.includes('The bucket you are trying to access does not exist')) {
-            throw new Error('Bucket "videos" غير موجود. الرجاء إنشائه في قسم Storage');
-        }
-        
-        return true;
-    } catch (error) {
-        console.error('Storage bucket check failed:', error);
-        throw error;
-    }
-}
+});
 
 function formatNumber(num) {
-    if (num === null || num === undefined) return '0';
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
@@ -1025,8 +596,7 @@ function toggleA() {
     document.getElementById('authError').textContent = '';
 }
 
-document.getElementById('aConfirmBtn').addEventListener('click', auth);
-async function auth() {
+document.getElementById('aConfirmBtn').addEventListener('click', async () => {
     const e = document.getElementById('aEmail').value.trim();
     const p = document.getElementById('aPass').value;
     const u = document.getElementById('aUser').value.trim();
@@ -1047,9 +617,8 @@ async function auth() {
         btn.innerHTML = "جاري المعالجة... <div class='loading-spinner' style='display:inline-block; width:16px; height:16px; margin-left:10px;'></div>";
         errorEl.textContent = '';
 
-        let authResult;
         if (isSign) {
-            authResult = await client.auth.signUp({ 
+            const { error } = await client.auth.signUp({ 
                 email: e, 
                 password: p, 
                 options: { 
@@ -1058,13 +627,12 @@ async function auth() {
                     } 
                 } 
             });
+            if (error) throw error;
         } else {
-            authResult = await client.auth.signInWithPassword({ email: e, password: p });
+            const { error } = await client.auth.signInWithPassword({ email: e, password: p });
+            if (error) throw error;
         }
         
-        if (authResult.error) throw authResult.error;
-
-        // إغلاق المودال وإعادة تهيئة الحالة
         document.getElementById('aModal').style.display = 'none';
         await init();
     } catch (err) {
@@ -1076,7 +644,7 @@ async function auth() {
         btn.disabled = false;
         btn.innerHTML = "تأكيد";
     }
-}
+});
 
 document.getElementById('aModal').addEventListener('click', (e) => {
     if (e.target.id === 'aModal') {
@@ -1098,7 +666,6 @@ function sanitizeFilename(name) {
     return name.replace(/[^a-zA-Z0-9.\-_ء-ي ]/g, '_').replace(/\s+/g, '_');
 }
 
-// بدء التهيئة عند تحميل الصفحة
 document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
