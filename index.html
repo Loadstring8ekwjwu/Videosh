@@ -40,7 +40,7 @@ video { width: 100%; aspect-ratio: 16/9; background: #000; }
 </div>
 
 <div id="aModal" class="modal">
-    <div class="modal-box">
+    <div class="modal-box" id="modalBox">
         <h3 id="aTitle">تسجيل دخول</h3>
         <input type="text" id="aUser" placeholder="اسم المستخدم" style="display:none">
         <input type="email" id="aEmail" placeholder="الإيميل">
@@ -58,95 +58,109 @@ const client = supabase.createClient(S_URL, S_KEY);
 let user = null;
 let isSign = false;
 
-// تهيئة الموقع
 async function init() {
-    const { data } = await client.auth.getUser();
-    user = data?.user;
+    try {
+        const { data, error } = await client.auth.getUser();
+        if (error) {
+            console.warn('auth.getUser error', error);
+        }
+        user = data?.user || null;
 
-    if(user) {
-        const name = user.user_metadata?.display_name || "مستخدم";
-        document.getElementById('nav').innerHTML = `<span>@${name}</span> <button class="btn" style="background:#666; margin-right:8px;">خروج</button>`;
-        document.querySelector('#nav button').addEventListener('click', async () => {
-            await client.auth.signOut();
-            location.reload();
-        });
-        document.getElementById('upSection').style.display = 'block';
+        if(user) {
+            const name = user.user_metadata?.display_name || "مستخدم";
+            document.getElementById('nav').innerHTML = `<span>@${name}</span> <button id="logoutBtn" class="btn" style="background:#666; margin-right:8px;">خروج</button>`;
+            document.getElementById('logoutBtn').addEventListener('click', async () => {
+                await client.auth.signOut();
+                location.reload();
+            });
+            document.getElementById('upSection').style.display = 'block';
+        } else {
+            // عرض زر الدخول الافتراضي
+            document.getElementById('nav').innerHTML = `<button class="btn" onclick="openAuth()">دخول</button>`;
+        }
+    } catch (e) {
+        console.error('init error', e);
     }
 
-    loadVideos();
+    await loadVideos();
 }
 
-// تحميل وعرض الفيديوهات
 async function loadVideos() {
-    const { data, error } = await client.from('video_files').select('*').order('id', {ascending: false});
     const div = document.getElementById('list');
-    if(error) { div.innerText = "حدث خطأ عند تحميل الفيديوهات"; console.error(error); return; }
-    if(!data?.length) { div.innerText = "لا يوجد فيديوهات."; return; }
+    div.innerText = "جاري التحميل...";
+    try {
+        const { data, error } = await client.from('video_files').select('*').order('id', { ascending: false });
+        if (error) {
+            div.innerText = "حدث خطأ عند تحميل الفيديوهات";
+            console.error(error);
+            return;
+        }
+        if (!data || !data.length) {
+            div.innerText = "لا يوجد فيديوهات.";
+            return;
+        }
 
-    const frag = document.createDocumentFragment();
-    data.forEach(v => {
-        const videoDiv = document.createElement('div');
-        videoDiv.className = "video-item";
-        videoDiv.innerHTML = `
-            <video src="${v.url}" controls></video>
-            <div class="p-15">
-                <b>${v.title}</b>
-                <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
-                    <span>بواسطة: ${v.username}</span>
-                </div>
-            </div>`;
-        frag.appendChild(videoDiv);
-    });
-    div.innerHTML = "";
-    div.appendChild(frag);
+        const frag = document.createDocumentFragment();
+        data.forEach(v => {
+            const videoDiv = document.createElement('div');
+            videoDiv.className = "video-item";
+            videoDiv.innerHTML = `
+                <video src="${v.url}" controls></video>
+                <div class="p-15">
+                    <b>${escapeHtml(v.title)}</b>
+                    <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
+                        <span>بواسطة: ${escapeHtml(v.username || 'مستخدم')}</span>
+                    </div>
+                </div>`;
+            frag.appendChild(videoDiv);
+        });
+        div.innerHTML = "";
+        div.appendChild(frag);
+    } catch (e) {
+        div.innerText = "حدث خطأ غير متوقع.";
+        console.error(e);
+    }
 }
 
-// رفع الفيديو بدون إعادة تحميل الصفحة
 document.getElementById('upBtn').addEventListener('click', doUpload);
 async function doUpload() {
-    const t = document.getElementById('vTitle').value;
-    const f = document.getElementById('vFile').files[0];
-    if(!t || !f) return alert("أكمل البيانات");
+    const t = document.getElementById('vTitle').value.trim();
+    const fileInput = document.getElementById('vFile');
+    const f = fileInput.files[0];
+    if (!t || !f) return alert("أكمل البيانات");
+
+    if (!user) return alert("يجب تسجيل الدخول لرفع الفيديو");
 
     const btn = document.getElementById('upBtn');
     btn.disabled = true;
     btn.innerText = "جاري الرفع...";
 
     try {
-        const path = Date.now() + "_" + f.name;
-        await client.storage.from('videos').upload(path, f, { upsert: true });
+        const path = `${Date.now()}_${sanitizeFilename(f.name)}`;
+        const { data: uploadData, error: uploadError } = await client.storage.from('videos').upload(path, f, { upsert: true });
+        if (uploadError) throw uploadError;
 
-        const data = client.storage.from('videos').getPublicUrl(path);
-        const publicUrl = data.publicUrl;
+        const { data: publicData, error: publicError } = client.storage.from('videos').getPublicUrl(path);
+        if (publicError) throw publicError;
+        const publicUrl = publicData?.publicUrl;
+        if (!publicUrl) throw new Error('لم يتم الحصول على رابط الملف العام');
 
-        const { error } = await client.from('video_files').insert([{
+        const { error: dbError } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
             username: user.user_metadata?.display_name || "مستخدم"
         }]);
-        if(error) throw error;
+        if (dbError) throw dbError;
 
         // إضافة الفيديو مباشرة للقائمة
-        const div = document.getElementById('list');
-        const videoDiv = document.createElement('div');
-        videoDiv.className = "video-item";
-        videoDiv.innerHTML = `
-            <video src="${publicUrl}" controls></video>
-            <div class="p-15">
-                <b>${t}</b>
-                <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
-                    <span>بواسطة: ${user.user_metadata?.display_name || "مستخدم"}</span>
-                </div>
-            </div>`;
-        div.prepend(videoDiv);
+        await loadVideos();
 
         btn.disabled = false;
         btn.innerText = "رفع الآن";
-
         document.getElementById('vTitle').value = "";
-        document.getElementById('vFile').value = "";
+        fileInput.value = "";
 
-    } catch(e) {
+    } catch (e) {
         alert("حدث خطأ أثناء الرفع");
         console.error(e);
         btn.disabled = false;
@@ -154,8 +168,7 @@ async function doUpload() {
     }
 }
 
-// فتح المودال وتبديل دخول/تسجيل
-function openAuth() { document.getElementById('aModal').style.display='flex'; }
+function openAuth() { document.getElementById('aModal').style.display = 'flex'; }
 function toggleA() {
     isSign = !isSign;
     document.getElementById('aTitle').innerText = isSign ? "حساب جديد" : "تسجيل دخول";
@@ -164,23 +177,60 @@ function toggleA() {
     userInput.value = "";
 }
 
-// زر تأكيد تسجيل الدخول / التسجيل
 document.getElementById('aConfirmBtn').addEventListener('click', auth);
 async function auth() {
-    const e = document.getElementById('aEmail').value;
+    const e = document.getElementById('aEmail').value.trim();
     const p = document.getElementById('aPass').value;
-    const u = document.getElementById('aUser').value;
+    const u = document.getElementById('aUser').value.trim();
+
+    if (!e || !p) return alert('أكمل الحقول المطلوبة');
 
     try {
-        if(isSign) {
-            await client.auth.signUp({email:e, password:p, options:{data:{display_name:u}}});
+        if (isSign) {
+            const { data, error } = await client.auth.signUp({ email: e, password: p, options: { data: { display_name: u || undefined } } });
+            if (error) throw error;
         } else {
-            await client.auth.signInWithPassword({email:e, password:p});
+            const { data, error } = await client.auth.signInWithPassword({ email: e, password: p });
+            if (error) throw error;
         }
-        location.reload();
-    } catch(err) {
-        alert(err.message);
+        // إغلاق المودال وإعادة تهيئة الحالة
+        document.getElementById('aModal').style.display = 'none';
+        await init();
+    } catch (err) {
+        console.error(err);
+        // بعض أخطاء Supabase تكون في err.error أو err.message
+        const msg = err?.error?.message || err?.message || JSON.stringify(err);
+        alert(msg);
     }
+}
+
+// إغلاق المودال عند النقر خارج الصندوق
+document.getElementById('aModal').addEventListener('click', (e) => {
+    if (e.target.id === 'aModal') {
+        document.getElementById('aModal').style.display = 'none';
+    }
+});
+
+// مساعدة بسيطة لتفادي XSS في النصوص المعروضة
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"'`=\/]/g, function (s) {
+        return ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            '/': '&#x2F;',
+            '`': '&#x60;',
+            '=': '&#x3D;'
+        })[s];
+    });
+}
+
+// تنظيف اسم الملف
+function sanitizeFilename(name) {
+    return name.replace(/[^a-zA-Z0-9.\-_ء-ي ]/g, '_');
 }
 
 init();
