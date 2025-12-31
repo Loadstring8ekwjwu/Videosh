@@ -685,6 +685,7 @@ async function toggleLike(videoId, element) {
     }
 }
 
+// دالة لعرض/إخفاء قسم التعليقات (معدلة)
 function toggleComments(videoId, element) {
     if (!user) {
         alert("يجب تسجيل الدخول لكتابة التعليقات");
@@ -702,14 +703,15 @@ function toggleComments(videoId, element) {
         activeComments.delete(videoId);
         element.classList.remove('comments-active');
     } else {
-        // إظهار التعليقات وتحميلها
+        // إظهار التعليقات
         commentsSection.style.display = 'block';
         activeComments.add(videoId);
         element.classList.add('comments-active');
         
         // تحميل التعليقات إذا لم تكن محملة من قبل
-        if (commentsList.innerHTML === 'جاري تحميل التعليقات...') {
+        if (!commentsList.dataset.loaded) {
             loadComments(videoId);
+            commentsList.dataset.loaded = 'true';
         }
         
         // وضع التركيز على مربع التعليق
@@ -719,6 +721,7 @@ function toggleComments(videoId, element) {
     }
 }
 
+// دالة لتحميل التعليقات (معدلة)
 async function loadComments(videoId) {
     const commentsList = document.getElementById(`comments-list-${videoId}`);
     commentsList.innerHTML = 'جاري تحميل التعليقات...';
