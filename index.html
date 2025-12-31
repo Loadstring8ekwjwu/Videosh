@@ -102,6 +102,7 @@ video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
 </div>
 
 <script>
+// إعدادات Supabase
 const S_URL = 'https://dirvquetzoqenqzezqhr.supabase.co';
 const S_KEY = 'sb_publishable_eeDbQM7zyLYW_8qKBzkbhg_9LduTmqw';
 const client = supabase.createClient(S_URL, S_KEY);
@@ -149,7 +150,10 @@ async function loadVideos() {
             .select('id, title, url, username, user_id, created_at, path')
             .order('created_at', { ascending: false });
         
-        if (videosError) throw videosError;
+        if (videosError) {
+            console.error('Videos error:', videosError);
+            throw new Error(`خطأ في جلب الفيديوهات: ${videosError.message}`);
+        }
         
         if (!videos || videos.length === 0) {
             div.innerHTML = "<div style='text-align: center; padding: 30px;'>لا يوجد فيديوهات.</div>";
@@ -163,8 +167,9 @@ async function loadVideos() {
             .select('video_id')
             .in('video_id', videoIds);
         
-        if (viewsError && viewsError.code !== 'PGRST116') { // PGRST116: no rows returned
-            console.warn('views error', viewsError);
+        if (viewsError) {
+            console.error('Views error:', viewsError);
+            // لا نعطل العملية إذا كانت هناك مشكلة في جلب المشاهدات
         }
 
         // حساب عدادات المشاهدات
@@ -181,11 +186,12 @@ async function loadVideos() {
             .select('video_id, user_id')
             .in('video_id', videoIds);
         
-        if (likesError && likesError.code !== 'PGRST116') {
-            console.warn('likes error', likesError);
+        if (likesError) {
+            console.error('Likes error:', likesError);
+            // لا نعطل العملية إذا كانت هناك مشكلة في جلب الإعجابات
         }
 
-        // حساب عدادات الإعجاجات وتحديد ما إذا كان المستخدم قد أعجب بالفيديو
+        // حساب عدادات الإعجابات وتحديد ما إذا كان المستخدم قد أعجب بالفيديو
         const likesCount = {};
         const userLikes = {};
         if (likesData) {
@@ -241,7 +247,7 @@ async function loadVideos() {
         div.appendChild(frag);
     } catch (e) {
         console.error('loadVideos error', e);
-        div.innerHTML = `<div class="error-message">حدث خطأ غير متوقع أثناء تحميل الفيديوهات: ${e.message}</div>`;
+        div.innerHTML = `<div class="error-message">حدث خطأ: ${e.message}<br><br>الرجاء التأكد من:<br>1. وجود جداول قاعدة البيانات<br>2. إعدادات صلاحيات Supabase</div>`;
     }
 }
 
@@ -276,10 +282,11 @@ async function incrementView(videoId) {
             .select('id')
             .eq('video_id', videoId)
             .eq('user_id', user.id)
-            .maybeSingle(); // يستخدم maybeSingle للسماح بعدم وجود نتائج
+            .maybeSingle();
         
-        if (checkError && checkError.code !== 'PGRST116') { // PGRST116: no rows returned
-            throw checkError;
+        if (checkError) {
+            console.error('Check view error:', checkError);
+            return;
         }
         
         // إذا لم يسجل مشاهدة من قبل
@@ -293,7 +300,10 @@ async function incrementView(videoId) {
                     }
                 ]);
             
-            if (insertError) throw insertError;
+            if (insertError) {
+                console.error('Insert view error:', insertError);
+                return;
+            }
             
             // تحديث العرض فوراً
             const countElement = document.querySelector(`.view-count-${videoId}`);
