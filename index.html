@@ -6,18 +6,50 @@
 <title>فيديو شير - النسخة النهائية</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-:root { --red: #ff0000; --bg: #f4f4f4; }
+:root { --red: #ff0000; --bg: #f4f4f4; --yellow: #ffc107; }
 body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); margin: 0; direction: rtl; }
 header { background: #fff; padding: 12px 5%; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
 .btn { background: var(--red); color: #fff; border: none; padding: 8px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; }
 .container { max-width: 800px; margin: 20px auto; padding: 0 15px; }
 .upload-card { background: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: none; }
 input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; }
-.video-item { background: #fff; border-radius: 12px; margin-bottom: 20px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-video { width: 100%; aspect-ratio: 16/9; background: #000; }
+.video-item { background: #fff; border-radius: 12px; margin-bottom: 20px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); position: relative; }
+video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
 .p-15 { padding: 15px; }
 .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
 .modal-box { background: #fff; padding: 25px; border-radius: 12px; width: 90%; max-width: 380px; text-align: center; }
+.video-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding: 0 15px 15px;
+    color: #666;
+    font-size: 0.9rem;
+}
+.like-btn {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.like-btn.liked {
+    color: var(--yellow);
+}
+.views-count {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.stats-container {
+    display: flex;
+    gap: 20px;
+}
+.authenticated-only { display: none; }
+.user-authenticated .authenticated-only { display: inline-block; }
 </style>
 </head>
 <body>
@@ -57,6 +89,7 @@ const client = supabase.createClient(S_URL, S_KEY);
 
 let user = null;
 let isSign = false;
+const viewedVideos = new Set(); // لتتبع الفيديوهات التي تم تسجيل مشاهدتها
 
 async function init() {
     try {
@@ -74,9 +107,10 @@ async function init() {
                 location.reload();
             });
             document.getElementById('upSection').style.display = 'block';
+            document.body.classList.add('user-authenticated');
         } else {
-            // عرض زر الدخول الافتراضي
             document.getElementById('nav').innerHTML = `<button class="btn" onclick="openAuth()">دخول</button>`;
+            document.body.classList.remove('user-authenticated');
         }
     } catch (e) {
         console.error('init error', e);
@@ -89,27 +123,84 @@ async function loadVideos() {
     const div = document.getElementById('list');
     div.innerText = "جاري التحميل...";
     try {
-        const { data, error } = await client.from('video_files').select('*').order('id', { ascending: false });
-        if (error) {
-            div.innerText = "حدث خطأ عند تحميل الفيديوهات";
-            console.error(error);
-            return;
-        }
-        if (!data || !data.length) {
+        // جلب الفيديوهات مع عدادات المشاهدات والإعجابات
+        const { data: videos, error: videosError } = await client
+            .from('video_files')
+            .select('id, title, url, username, user_id, created_at')
+            .order('created_at', { ascending: false });
+        
+        if (videosError) throw videosError;
+        
+        if (!videos || !videos.length) {
             div.innerText = "لا يوجد فيديوهات.";
             return;
         }
 
+        // جلب عدد المشاهدات لكل فيديو
+        const videoIds = videos.map(v => v.id);
+        const { data: viewsData } = await client
+            .from('views')
+            .select('video_id')
+            .in('video_id', videoIds);
+        
+        // حساب عدادات المشاهدات
+        const viewsCount = {};
+        viewsData.forEach(view => {
+            viewsCount[view.video_id] = (viewsCount[view.video_id] || 0) + 1;
+        });
+
+        // جلب عدد الإعجابات لكل فيديو
+        const { data: likesData } = await client
+            .from('likes')
+            .select('video_id, user_id')
+            .in('video_id', videoIds);
+        
+        // حساب عدادات الإعجابات
+        const likesCount = {};
+        const userLikes = {};
+        likesData.forEach(like => {
+            likesCount[like.video_id] = (likesCount[like.video_id] || 0) + 1;
+            if (user && like.user_id === user.id) {
+                userLikes[like.video_id] = true;
+            }
+        });
+
         const frag = document.createDocumentFragment();
-        data.forEach(v => {
+        videos.forEach(v => {
             const videoDiv = document.createElement('div');
             videoDiv.className = "video-item";
+            const viewCount = viewsCount[v.id] || 0;
+            const likeCount = likesCount[v.id] || 0;
+            const isLiked = userLikes[v.id] || false;
+            
             videoDiv.innerHTML = `
-                <video src="${v.url}" controls></video>
+                <video 
+                    src="${v.url}" 
+                    controls 
+                    data-id="${v.id}"
+                    onplay="trackView(${v.id}, this)"
+                    ${user ? '' : 'preload="metadata"'}
+                ></video>
                 <div class="p-15">
                     <b>${escapeHtml(v.title)}</b>
                     <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
                         <span>بواسطة: ${escapeHtml(v.username || 'مستخدم')}</span>
+                        <span>${new Date(v.created_at).toLocaleDateString('ar-EG')}</span>
+                    </div>
+                </div>
+                <div class="video-stats">
+                    <div class="stats-container">
+                        <div class="views-count">
+                            <span>👀</span> <span class="view-count-${v.id}">${formatNumber(viewCount)}</span>
+                        </div>
+                        <button class="like-btn ${isLiked ? 'liked' : ''}" 
+                                data-id="${v.id}" 
+                                onclick="toggleLike(${v.id}, this)">
+                            <span>❤️</span> <span class="like-count-${v.id}">${formatNumber(likeCount)}</span>
+                        </button>
+                    </div>
+                    <div class="authenticated-only">
+                        ${user?.id === v.user_id ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>` : ''}
                     </div>
                 </div>`;
             frag.appendChild(videoDiv);
@@ -122,13 +213,166 @@ async function loadVideos() {
     }
 }
 
+// دالة لتسجيل المشاهدة عند تشغيل الفيديو
+function trackView(videoId, videoElement) {
+    if (viewedVideos.has(videoId) || !user) return;
+    
+    // التأكد من أن الفيديو شوهد أكثر من 3 ثواني
+    const playTime = Date.now();
+    const handler = () => {
+        if (videoElement.currentTime > 3 && !viewedVideos.has(videoId)) {
+            viewedVideos.add(videoId);
+            incrementView(videoId);
+            videoElement.removeEventListener('timeupdate', handler);
+        }
+    };
+    
+    videoElement.addEventListener('timeupdate', handler);
+}
+
+async function incrementView(videoId) {
+    try {
+        if (!user) return;
+        
+        // التحقق أولاً إذا كان المستخدم قد شاهد هذا الفيديو من قبل
+        const { data: existingView, error: checkError } = await client
+            .from('views')
+            .select('id')
+            .eq('video_id', videoId)
+            .eq('user_id', user.id)
+            .single();
+        
+        if (checkError && checkError.code !== 'PGRST116') { // PGRST116: no rows returned
+            throw checkError;
+        }
+        
+        // إذا لم يسجل مشاهدة من قبل
+        if (!existingView) {
+            const { error: insertError } = await client
+                .from('views')
+                .insert([
+                    { 
+                        video_id: videoId, 
+                        user_id: user.id 
+                    }
+                ]);
+            
+            if (insertError) throw insertError;
+            
+            // تحديث العرض فوراً
+            const countElement = document.querySelector(`.view-count-${videoId}`);
+            if (countElement) {
+                const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
+                countElement.textContent = formatNumber(currentCount + 1);
+            }
+        }
+    } catch (e) {
+        console.error('Error incrementing views', e);
+    }
+}
+
+async function toggleLike(videoId, element) {
+    if (!user) return openAuth();
+    
+    const isLiked = element.classList.contains('liked');
+    const countElement = element.querySelector(`.like-count-${videoId}`);
+    let currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
+    
+    try {
+        if (isLiked) {
+            // إلغاء الإعجاب
+            const { error } = await client
+                .from('likes')
+                .delete()
+                .match({ 
+                    video_id: videoId, 
+                    user_id: user.id 
+                });
+            
+            if (error) throw error;
+            element.classList.remove('liked');
+            countElement.textContent = formatNumber(currentCount - 1);
+        } else {
+            // إضافة إعجاب
+            const { error } = await client
+                .from('likes')
+                .insert([
+                    { 
+                        video_id: videoId, 
+                        user_id: user.id 
+                    }
+                ]);
+            
+            if (error) throw error;
+            element.classList.add('liked');
+            countElement.textContent = formatNumber(currentCount + 1);
+        }
+    } catch (e) {
+        console.error('Error toggling like', e);
+        alert('حدث خطأ أثناء عملية الإعجاب');
+    }
+}
+
+async function deleteVideo(videoId) {
+    if (!confirm('هل أنت متأكد من حذف هذا الفيديو؟')) return;
+    
+    try {
+        // الحصول على بيانات الفيديو أولاً للحصول على المسار
+        const { data: video, error: fetchError } = await client
+            .from('video_files')
+            .select('path, url')
+            .eq('id', videoId)
+            .single();
+        
+        if (fetchError) throw fetchError;
+        
+        // حذف الملف من التخزين
+        const filePath = video.path || getFilePathFromUrl(video.url);
+        const { error: storageError } = await client.storage
+            .from('videos')
+            .remove([filePath]);
+        
+        if (storageError) {
+            console.warn('Storage delete error (might already be deleted):', storageError);
+        }
+        
+        // حذف السجل من قاعدة البيانات
+        const { error: dbError } = await client
+            .from('video_files')
+            .delete()
+            .eq('id', videoId);
+            
+        if (dbError) throw dbError;
+        
+        // حذف جميع المشاهدات والإعجابات المرتبطة بهذا الفيديو
+        await client.from('views').delete().eq('video_id', videoId);
+        await client.from('likes').delete().eq('video_id', videoId);
+        
+        // تحديث القائمة
+        await loadVideos();
+    } catch (e) {
+        console.error('Error deleting video', e);
+        alert('حدث خطأ أثناء حذف الفيديو');
+    }
+}
+
+// دالة لاستخراج مسار الملف من URL إذا لم يكن مخزناً في قاعدة البيانات
+function getFilePathFromUrl(url) {
+    try {
+        const urlObj = new URL(url);
+        return urlObj.pathname.replace('/storage/v1/object/public/videos/', '');
+    } catch (e) {
+        console.error('Error parsing URL', e);
+        return url.split('/').pop();
+    }
+}
+
 document.getElementById('upBtn').addEventListener('click', doUpload);
 async function doUpload() {
     const t = document.getElementById('vTitle').value.trim();
     const fileInput = document.getElementById('vFile');
     const f = fileInput.files[0];
     if (!t || !f) return alert("أكمل البيانات");
-
     if (!user) return alert("يجب تسجيل الدخول لرفع الفيديو");
 
     const btn = document.getElementById('upBtn');
@@ -140,19 +384,25 @@ async function doUpload() {
         const { data: uploadData, error: uploadError } = await client.storage.from('videos').upload(path, f, { upsert: true });
         if (uploadError) throw uploadError;
 
-        const { data: publicData, error: publicError } = client.storage.from('videos').getPublicUrl(path);
-        if (publicError) throw publicError;
+        const { data: publicData } = await client.storage.from('videos').getPublicUrl(path);
         const publicUrl = publicData?.publicUrl;
         if (!publicUrl) throw new Error('لم يتم الحصول على رابط الملف العام');
 
-        const { error: dbError } = await client.from('video_files').insert([{
+        // الحصول على username من البيانات
+        const username = user.user_metadata?.display_name || "مستخدم";
+        
+        // إضافة الفيديو مع الحقول الجديدة
+        const { data: videoData, error: dbError } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
-            username: user.user_metadata?.display_name || "مستخدم"
-        }]);
+            path: path, // حفظ المسار للحذف لاحقاً
+            username: username,
+            user_id: user.id
+        }]).select().single();
+        
         if (dbError) throw dbError;
 
-        // إضافة الفيديو مباشرة للقائمة
+        // تحديث القائمة
         await loadVideos();
 
         btn.disabled = false;
@@ -166,6 +416,11 @@ async function doUpload() {
         btn.disabled = false;
         btn.innerText = "رفع الآن";
     }
+}
+
+// تنسيق الأرقام الكبيرة (1000 -> 1,000)
+function formatNumber(num) {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 function openAuth() { document.getElementById('aModal').style.display = 'flex'; }
@@ -184,10 +439,19 @@ async function auth() {
     const u = document.getElementById('aUser').value.trim();
 
     if (!e || !p) return alert('أكمل الحقول المطلوبة');
+    if (isSign && !u) return alert('الرجاء إدخال اسم المستخدم');
 
     try {
         if (isSign) {
-            const { data, error } = await client.auth.signUp({ email: e, password: p, options: { data: { display_name: u || undefined } } });
+            const { data, error } = await client.auth.signUp({ 
+                email: e, 
+                password: p, 
+                options: { 
+                    data: { 
+                        display_name: u || `user_${Date.now().toString(36).slice(2, 8)}` 
+                    } 
+                } 
+            });
             if (error) throw error;
         } else {
             const { data, error } = await client.auth.signInWithPassword({ email: e, password: p });
@@ -198,8 +462,7 @@ async function auth() {
         await init();
     } catch (err) {
         console.error(err);
-        // بعض أخطاء Supabase تكون في err.error أو err.message
-        const msg = err?.error?.message || err?.message || JSON.stringify(err);
+        const msg = err?.error?.message || err?.message || 'حدث خطأ في المصادقة';
         alert(msg);
     }
 }
@@ -230,7 +493,15 @@ function escapeHtml(str) {
 
 // تنظيف اسم الملف
 function sanitizeFilename(name) {
-    return name.replace(/[^a-zA-Z0-9.\-_ء-ي ]/g, '_');
+    return name.replace(/[^a-zA-Z0-9.\-_ء-ي ]/g, '_').replace(/\s+/g, '_');
+}
+
+// دالة للتعامل مع الأخطاء الشائعة في Supabase
+function handleSupabaseError(error, defaultMessage = 'حدث خطأ') {
+    if (!error) return;
+    console.error('Supabase Error:', error);
+    const msg = error.message || error.msg || error.error_description || defaultMessage;
+    alert(msg);
 }
 
 init();
