@@ -708,11 +708,8 @@ function toggleComments(videoId, element) {
         activeComments.add(videoId);
         element.classList.add('comments-active');
         
-        // تحميل التعليقات إذا لم تكن محملة من قبل
-        if (!commentsList.dataset.loaded) {
-            loadComments(videoId);
-            commentsList.dataset.loaded = 'true';
-        }
+        // تحميل التعليقات دائمًا عند النقر
+        loadComments(videoId);
         
         // وضع التركيز على مربع التعليق
         setTimeout(() => {
@@ -933,7 +930,7 @@ async function doUpload() {
             throw new Error('فشل الحصول على رابط الملف العام');
         }
 
-        const username = user.user_metadata?.display_name || `مستخدم_${Date.now().toString(36).slice(2, 8)}`;
+        const username = user.user_metadata?.display_name || `user_${Date.now().toString(36).slice(2, 8)}`;
         
         const { error: dbError } = await client.from('video_files').insert([{
             title: t,
