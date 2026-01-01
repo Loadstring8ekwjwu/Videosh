@@ -8,7 +8,7 @@
 <style>
 :root { --red: #ff0000; --bg: #f4f4f4; --yellow: #ffc107; --blue: #0d6efd; --gray: #6c757d; }
 body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); margin: 0; direction: rtl; }
-header { background: #fff; padding: 12px 5%; display: flex; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
+header { background: #fff; padding: 12px 5%; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
 .btn { background: var(--red); color: #fff; border: none; padding: 8px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; }
 .container { max-width: 800px; margin: 20px auto; padding: 0 15px; }
 .upload-card { background: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: none; }
@@ -188,33 +188,44 @@ video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
     font-size: 0.9rem;
     margin-bottom: 15px;
 }
-.search-container { position: relative; flex: 1; margin-left: 10px; max-width: 500px; }
-.search-icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: #888; }
-#searchInput { 
-    width: 100%; 
-    padding: 8px 15px 8px 35px; 
-    border-radius: 20px; 
-    border: 1px solid #ddd; 
+.search-container {
+    position: relative;
+    max-width: 500px;
+    margin: 10px auto;
+}
+#searchInput {
+    width: 100%;
+    padding: 10px 15px 10px 35px;
+    border-radius: 20px;
+    border: 1px solid #ddd;
+    font-size: 0.95rem;
     direction: rtl;
-    font-size: 0.9rem;
+}
+.search-icon {
+    position: absolute;
+    left: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #888;
 }
 </style>
 </head>
 <body>
 
 <header>
-    <div class="search-container">
-        <span class="search-icon">🔍</span>
-        <input type="text" id="searchInput" placeholder="ابحث عن فيديو..." 
-               oninput="searchVideos()">
-    </div>
-    <h2 style="color:var(--red); margin:0 10px; flex:1; text-align:center;">🎥 فيديو شير</h2>
-    <div id="nav" style="flex:1; text-align:left; padding-left:10px;">
+    <h2 style="color:var(--red); margin:0;">🎥 فيديو شير</h2>
+    <div id="nav">
         <button class="btn" onclick="openAuth()">دخول</button>
     </div>
 </header>
 
 <div class="container">
+    <div class="search-container">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="ابحث عن فيديو أو مستخدم..." 
+               oninput="filterVideos()">
+    </div>
+    
     <div id="upSection" class="upload-card">
         <h3 style="margin-top:0;">نشر فيديو</h3>
         <input type="text" id="vTitle" placeholder="العنوان">
@@ -278,6 +289,8 @@ let currentView = 'home';
 const videoSessions = new Map();
 const activeComments = new Set();
 const likedVideos = new Set();
+let allVideos = []; // تخزين جميع الفيديوهات محلياً
+let allComments = new Map(); // تخزين التعليقات محلياً
 
 // دالة تحقق من اتصال قاعدة البيانات
 async function checkDatabaseConnection() {
@@ -306,7 +319,7 @@ async function init() {
             throw new Error('لا يمكن الاتصال بقاعدة البيانات. الرجاء التحقق من الإعدادات.');
         }
 
-        const {  { user: currentUser }, error: authError } = await client.auth.getUser();
+        const { data: { user: currentUser }, error: authError } = await client.auth.getUser();
         if (authError) {
             console.warn('auth.getUser error', authError);
         }
@@ -346,7 +359,7 @@ async function init() {
     }
 
     if (currentView === 'home') {
-        await loadVideos();
+        await loadAllVideos();
     } else {
         await loadUserProfile();
     }
@@ -356,7 +369,7 @@ async function loadUserLikes() {
     try {
         if (!user) return;
         
-        const {  userLikes, error } = await client
+        const { data: userLikes, error } = await client
             .from('video_likes')
             .select('video_id')
             .eq('user_id', user.id);
@@ -369,125 +382,181 @@ async function loadUserLikes() {
     }
 }
 
-async function loadVideos(searchTerm = '') {
+// تحميل جميع الفيديوهات مرة واحدة
+async function loadAllVideos() {
     const div = document.getElementById('list');
     div.innerHTML = '<div style="text-align:center; padding:30px;">جاري التحميل... <div class="loading-spinner"></div></div>';
     
     try {
-        // بناء الاستعلام حسب وجود نص البحث
-        let query = client
+        // جلب جميع الفيديوهات
+        const { data: videos, error: videosError } = await client
             .from('video_files')
             .select('id, title, url, username, views, likes, created_at, path')
             .order('created_at', { ascending: false });
-        
-        if (searchTerm) {
-            // البحث في العنوان واسم المستخدم
-            query = query.or(`title.ilike.%${searchTerm}%,username.ilike.%${searchTerm}%`);
-        }
-
-        const {  videos, error: videosError } = await query;
 
         if (videosError) {
             throw videosError;
         }
 
-        if (!videos || videos.length === 0) {
-            div.innerHTML = `<div style='text-align: center; padding: 30px;'>
-                ${searchTerm ? 'لم يتم العثور على فيديوهات' : 'لا يوجد فيديوهات.'}
-                ${searchTerm ? `<button class="btn" style="margin-top:15px;" onclick="clearSearch()">مسح البحث</button>` : ''}
-            </div>`;
+        allVideos = videos || [];
+        
+        if (allVideos.length === 0) {
+            div.innerHTML = "<div style='text-align: center; padding: 30px;'>لا يوجد فيديوهات.</div>";
             return;
         }
 
-        // جلب عدد التعليقات
-        const videoIds = videos.map(v => v.id);
-        const commentsCount = {};
+        // جلب جميع التعليقات دفعة واحدة
+        const videoIds = allVideos.map(v => v.id);
+        const { data: commentsData, error: commentsError } = await client
+            .from('video_comments')
+            .select('*');
         
-        try {
-            const {  commentsData, error: commentsError } = await client
-                .from('video_comments')
-                .select('video_id')
-                .in('video_id', videoIds);
-            
-            if (!commentsError && commentsData) {
-                commentsData.forEach(comment => {
-                    commentsCount[comment.video_id] = (commentsCount[comment.video_id] || 0) + 1;
-                });
-            }
-        } catch (commentsError) {
-            console.error('Comments count error:', commentsError);
+        if (!commentsError && commentsData) {
+            allComments = new Map();
+            commentsData.forEach(comment => {
+                if (!allComments.has(comment.video_id)) {
+                    allComments.set(comment.video_id, []);
+                }
+                allComments.get(comment.video_id).push(comment);
+            });
         }
 
-        const frag = document.createDocumentFragment();
-        videos.forEach(v => {
-            const videoDiv = document.createElement('div');
-            videoDiv.className = "video-item";
-            const viewCount = v.views || 0;
-            const likeCount = v.likes || 0;
-            const commentCount = commentsCount[v.id] || 0;
-            const isLiked = likedVideos.has(v.id);
-            
-            videoDiv.innerHTML = `
-                <video 
-                    src="${escapeHtml(v.url)}" 
-                    controls 
-                    data-id="${v.id}"
-                    onplay="startViewTracking(${v.id}, this)"
-                    onpause="endViewTracking(${v.id})"
-                    onended="endViewTracking(${v.id})"
-                ></video>
-                <div class="p-15">
-                    <b>${escapeHtml(v.title)}</b>
-                    <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
-                        <span>بواسطة: ${escapeHtml(v.username || 'مستخدم')}</span>
-                        <span>${new Date(v.created_at).toLocaleDateString('ar-EG')}</span>
-                    </div>
-                </div>
-                <div class="video-stats">
-                    <div class="stats-container">
-                        <button class="stat-btn" title="مشاهدات">
-                            <span>👀</span> <span class="view-count-${v.id}">${formatNumber(viewCount)}</span>
-                        </button>
-                        <button class="stat-btn ${isLiked ? 'liked' : ''}" 
-                                data-id="${v.id}" 
-                                onclick="toggleLike(${v.id}, this)">
-                            <span>❤️</span> <span class="like-count-${v.id}">${formatNumber(likeCount)}</span>
-                        </button>
-                        <button class="stat-btn" 
-                                data-id="${v.id}" 
-                                onclick="toggleComments(${v.id}, this)">
-                            <span>💬</span> <span class="comment-count-${v.id}">${formatNumber(commentCount)}</span>
-                        </button>
-                    </div>
-                    <div class="authenticated-only">
-                        ${user?.user_metadata?.display_name === v.username ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>` : ''}
-                    </div>
-                </div>
-                <div id="comments-section-${v.id}" class="comments-section">
-                    <div class="comment-input-container">
-                        <textarea id="comment-input-${v.id}" class="comment-input" placeholder="اكتب تعليقك هنا..." rows="2"></textarea>
-                        <button class="comment-btn" onclick="addComment(${v.id})">إرسال</button>
-                    </div>
-                    <div id="comments-list-${v.id}" class="comments-list">
-                        جاري تحميل التعليقات...
-                    </div>
-                </div>`;
-            frag.appendChild(videoDiv);
-        });
-        
-        div.innerHTML = "";
-        div.appendChild(frag);
+        // عرض الفيديوهات
+        filterVideos();
         
     } catch (e) {
-        console.error('loadVideos error', e);
+        console.error('loadAllVideos error', e);
         div.innerHTML = `<div class="error-message">
-            <h3>❌ حدث خطأ أثناء تحميل الفيديوهات</h3>
+            <h3>❌ حدث خطأ أثناء التحميل</h3>
             <p>${e.message || 'خطأ غير معروف'}</p>
             <button class="btn" onclick="location.reload()" style="margin-top:15px;">إعادة المحاولة</button>
         </div>`;
     }
 }
 
+// البحث المحلي في الفيديوهات
+function filterVideos() {
+    const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
+    const div = document.getElementById('list');
+    
+    if (!searchTerm) {
+        displayVideos(allVideos);
+        return;
+    }
+    
+    const filteredVideos = allVideos.filter(video => 
+        video.title.toLowerCase().includes(searchTerm) || 
+        video.username.toLowerCase().includes(searchTerm)
+    );
+    
+    displayVideos(filteredVideos);
+}
+
+// عرض الفيديوهات في الواجهة
+function displayVideos(videos) {
+    const div = document.getElementById('list');
+    
+    if (videos.length === 0) {
+        div.innerHTML = `<div style='text-align: center; padding: 30px;'>
+            لم يتم العثور على فيديوهات تطابق البحث<br>
+            <button class="btn" style="margin-top:15px;" onclick="document.getElementById('searchInput').value=''; filterVideos()">مسح البحث</button>
+        </div>`;
+        return;
+    }
+
+    const frag = document.createDocumentFragment();
+    videos.forEach(v => {
+        const videoDiv = document.createElement('div');
+        videoDiv.className = "video-item";
+        const viewCount = v.views || 0;
+        const likeCount = v.likes || 0;
+        const comments = allComments.get(v.id) || [];
+        const commentCount = comments.length;
+        const isLiked = likedVideos.has(v.id);
+        
+        videoDiv.innerHTML = `
+            <video 
+                src="${escapeHtml(v.url)}" 
+                controls 
+                data-id="${v.id}"
+                onplay="startViewTracking(${v.id}, this)"
+                onpause="endViewTracking(${v.id})"
+                onended="endViewTracking(${v.id})"
+            ></video>
+            <div class="p-15">
+                <b>${escapeHtml(v.title)}</b>
+                <div style="display:flex; justify-content:space-between; margin-top:10px; color:#777; font-size:0.9rem;">
+                    <span>بواسطة: ${escapeHtml(v.username || 'مستخدم')}</span>
+                    <span>${new Date(v.created_at).toLocaleDateString('ar-EG')}</span>
+                </div>
+            </div>
+            <div class="video-stats">
+                <div class="stats-container">
+                    <button class="stat-btn" title="مشاهدات">
+                        <span>👀</span> <span class="view-count-${v.id}">${formatNumber(viewCount)}</span>
+                    </button>
+                    <button class="stat-btn ${isLiked ? 'liked' : ''}" 
+                            data-id="${v.id}" 
+                            onclick="toggleLike(${v.id}, this)">
+                        <span>❤️</span> <span class="like-count-${v.id}">${formatNumber(likeCount)}</span>
+                    </button>
+                    <button class="stat-btn" 
+                            data-id="${v.id}" 
+                            onclick="toggleComments(${v.id}, this)">
+                        <span>💬</span> <span class="comment-count-${v.id}">${formatNumber(commentCount)}</span>
+                    </button>
+                </div>
+                <div class="authenticated-only">
+                    ${user?.user_metadata?.display_name === v.username ? `<button class="btn" style="background:#666; padding:3px 8px; font-size:0.8rem;" onclick="deleteVideo(${v.id})">حذف</button>` : ''}
+                </div>
+            </div>
+            <div id="comments-section-${v.id}" class="comments-section">
+                <div class="comment-input-container">
+                    <textarea id="comment-input-${v.id}" class="comment-input" placeholder="اكتب تعليقك هنا..." rows="2"></textarea>
+                    <button class="comment-btn" onclick="addComment(${v.id})">إرسال</button>
+                </div>
+                <div id="comments-list-${v.id}" class="comments-list">
+                    ${commentCount > 0 ? '' : 'لا يوجد تعليقات'}
+                </div>
+            </div>`;
+        frag.appendChild(videoDiv);
+    });
+    
+    div.innerHTML = "";
+    div.appendChild(frag);
+    
+    // تحميل التعليقات لكل فيديو
+    videos.forEach(v => {
+        const comments = allComments.get(v.id) || [];
+        if (comments.length > 0) {
+            renderComments(v.id, comments);
+        }
+    });
+}
+
+// عرض التعليقات لفيديو معين
+function renderComments(videoId, comments) {
+    const commentsList = document.getElementById(`comments-list-${videoId}`);
+    if (!commentsList) return;
+    
+    let html = '';
+    comments.forEach(comment => {
+        const timeAgo = getTimeAgo(new Date(comment.created_at));
+        html += `
+            <div class="comment-item">
+                <div class="comment-header">
+                    <span>${escapeHtml(comment.username)}</span>
+                    <span class="comment-time">${timeAgo}</span>
+                </div>
+                <div class="comment-content">${escapeHtml(comment.content)}</div>
+            </div>
+        `;
+    });
+    
+    commentsList.innerHTML = html;
+}
+
+// باقي الدوال كما هي (بدون تغيير)
 function showProfileSection() {
     document.getElementById('homeSection').style.display = 'none';
     document.getElementById('profileSection').style.display = 'block';
@@ -498,10 +567,10 @@ function showProfileSection() {
 function showHome() {
     document.getElementById('profileSection').style.display = 'none';
     document.getElementById('homeSection').style.display = 'block';
-    document.getElementById('searchInput').value = ''; // مسح حقل البحث
+    document.getElementById('searchInput').value = '';
     currentView = 'home';
     document.title = "فيديو شير - النسخة النهائية";
-    loadVideos();
+    displayVideos(allVideos);
 }
 
 function showProfile() {
@@ -522,13 +591,7 @@ async function loadUserProfile() {
     
     try {
         const username = user.user_metadata?.display_name || "مستخدم";
-        const {  userVideos, error } = await client
-            .from('video_files')
-            .select('id, title, url, views, likes, created_at, path')
-            .eq('username', username)
-            .order('created_at', { ascending: false });
-
-        if (error) throw error;
+        const userVideos = allVideos.filter(v => v.username === username);
         
         let totalVideos = 0;
         let totalViews = 0;
@@ -734,8 +797,10 @@ function toggleComments(videoId, element) {
         activeComments.add(videoId);
         element.classList.add('comments-active');
         
-        // تحميل التعليقات دائمًا عند النقر
-        loadComments(videoId);
+        // إذا كانت التعليقات لم تُحمّل بعد، احصل عليها
+        if (!allComments.has(videoId) || allComments.get(videoId).length === 0) {
+            loadComments(videoId);
+        }
         
         // وضع التركيز على مربع التعليق
         setTimeout(() => {
@@ -763,21 +828,10 @@ async function loadComments(videoId) {
             return;
         }
         
-        let html = '';
-        comments.forEach(comment => {
-            const timeAgo = getTimeAgo(new Date(comment.created_at));
-            html += `
-                <div class="comment-item">
-                    <div class="comment-header">
-                        <span>${escapeHtml(comment.username)}</span>
-                        <span class="comment-time">${timeAgo}</span>
-                    </div>
-                    <div class="comment-content">${escapeHtml(comment.content)}</div>
-                </div>
-            `;
-        });
+        // تخزين التعليقات في الذاكرة
+        allComments.set(videoId, comments);
         
-        commentsList.innerHTML = html;
+        renderComments(videoId, comments);
         
         // تحديث عداد التعليقات
         const countElement = document.querySelector(`.comment-count-${videoId}`);
@@ -813,28 +867,37 @@ async function addComment(videoId) {
     try {
         const username = user.user_metadata?.display_name || "مستخدم";
         
-        const { error } = await client
+        const {  newComment, error } = await client
             .from('video_comments')
             .insert([{
                 video_id: videoId,
                 user_id: user.id,
                 username: username,
                 content: commentText
-            }]);
+            }])
+            .select()
+            .single();
         
         if (error) throw error;
         
         // مسح مربع التعليق
         inputElement.value = '';
         
-        // إعادة تحميل التعليقات
-        loadComments(videoId);
+        // تحديث التعليقات في الذاكرة
+        if (!allComments.has(videoId)) {
+            allComments.set(videoId, []);
+        }
+        const comments = allComments.get(videoId);
+        comments.unshift(newComment); // إضافة التعليق الجديد في البداية
+        allComments.set(videoId, comments);
+        
+        // إعادة عرض التعليقات
+        renderComments(videoId, comments);
         
         // تحديث عداد التعليقات في الواجهة
         const countElement = document.querySelector(`.comment-count-${videoId}`);
         if (countElement) {
-            const currentCount = parseInt(countElement.textContent.replace(/,/g, '')) || 0;
-            countElement.textContent = formatNumber(currentCount + 1);
+            countElement.textContent = formatNumber(comments.length);
         }
         
     } catch (e) {
@@ -902,11 +965,15 @@ async function deleteVideo(videoId) {
         await client.from('video_likes').delete().eq('video_id', videoId);
         await client.from('video_comments').delete().eq('video_id', videoId);
         
+        // تحديث البيانات المحلية
+        allVideos = allVideos.filter(v => v.id !== videoId);
+        allComments.delete(videoId);
+        
         // تحديث القائمة المناسبة
         if (currentView === 'home') {
-            await loadVideos(document.getElementById('searchInput').value.trim());
+            displayVideos(allVideos);
         } else {
-            await loadUserProfile();
+            loadUserProfile();
         }
         
         alert('تم حذف الفيديو بنجاح!');
@@ -958,7 +1025,7 @@ async function doUpload() {
 
         const username = user.user_metadata?.display_name || `user_${Date.now().toString(36).slice(2, 8)}`;
         
-        const { error: dbError } = await client.from('video_files').insert([{
+        const {  newVideo, error: dbError } = await client.from('video_files').insert([{
             title: t,
             url: publicUrl,
             path: path,
@@ -966,14 +1033,17 @@ async function doUpload() {
             views: 0,
             likes: 0,
             created_at: new Date().toISOString()
-        }]);
+        }]).select().single();
         
         if (dbError) throw dbError;
 
+        // إضافة الفيديو الجديد إلى البيانات المحلية
+        allVideos.unshift(newVideo);
+        
         if (currentView === 'home') {
-            await loadVideos(document.getElementById('searchInput').value.trim());
+            displayVideos(allVideos);
         } else {
-            await loadUserProfile();
+            loadUserProfile();
         }
 
         btn.disabled = false;
@@ -990,25 +1060,6 @@ async function doUpload() {
         btn.innerHTML = "رفع الآن";
     }
 }
-
-// دالة البحث
-function searchVideos() {
-    const searchTerm = document.getElementById('searchInput').value.trim();
-    loadVideos(searchTerm);
-}
-
-// دالة مسح البحث
-function clearSearch() {
-    document.getElementById('searchInput').value = '';
-    loadVideos();
-}
-
-// التعامل مع ضغطة Enter في حقل البحث
-document.getElementById('searchInput').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        searchVideos();
-    }
-});
 
 function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
