@@ -319,7 +319,7 @@ async function init() {
             throw new Error('لا يمكن الاتصال بقاعدة البيانات. الرجاء التحقق من الإعدادات.');
         }
 
-        const { data: { user: currentUser }, error: authError } = await client.auth.getUser();
+        const {  { user: currentUser }, error: authError } = await client.auth.getUser();
         if (authError) {
             console.warn('auth.getUser error', authError);
         }
@@ -369,7 +369,7 @@ async function loadUserLikes() {
     try {
         if (!user) return;
         
-        const { data: userLikes, error } = await client
+        const {  userLikes, error } = await client
             .from('video_likes')
             .select('video_id')
             .eq('user_id', user.id);
@@ -389,7 +389,7 @@ async function loadAllVideos() {
     
     try {
         // جلب جميع الفيديوهات
-        const { data: videos, error: videosError } = await client
+        const {  videos, error: videosError } = await client
             .from('video_files')
             .select('id, title, url, username, views, likes, created_at, path')
             .order('created_at', { ascending: false });
